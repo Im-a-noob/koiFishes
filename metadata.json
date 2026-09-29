@@ -1,0 +1,6 @@
+{
+  "name": "Nishikigoi - Ornamental Koi Pond",
+  "description": "Nagomi - Interactive, procedurally animated 3D koi pond simulation with autonomous swimming, traveling body wave mechanics, underwater lighting, floating lotus, duckweed, darting minnows, butterflies, dynamic weather, and calming audio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

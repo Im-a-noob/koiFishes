@@ -1,0 +1,1719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Nishikigoi - Realistic Ornamental Koi Pond</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #05080a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    }
+    #canvas-container {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100vw;
+      height: 100vh;
+      background: #05080a;
+    }
+    canvas#display {
+      display: block;
+      image-rendering: -moz-crisp-edges;
+      image-rendering: -webkit-crisp-edges;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      cursor: crosshair;
+      box-shadow: 0 0 50px rgba(0, 0, 0, 0.9);
+    }
+    #ui-overlay {
+      position: absolute;
+      top: 16px;
+      left: 20px;
+      pointer-events: none;
+      color: rgba(230, 245, 245, 0.75);
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+      z-index: 10;
+      transition: opacity 0.5s ease;
+    }
+    #ui-overlay h1 {
+      font-size: 15px;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #e0f2f1;
+      margin-bottom: 2px;
+    }
+    #ui-overlay p {
+      font-size: 11px;
+      color: #80cbc4;
+      letter-spacing: 0.05em;
+    }
+    #controls {
+      position: absolute;
+      bottom: 16px;
+      right: 20px;
+      display: flex;
+      gap: 10px;
+      z-index: 10;
+    }
+    .btn {
+      background: rgba(12, 34, 40, 0.75);
+      border: 1px solid rgba(77, 208, 225, 0.3);
+      color: #e0f2f1;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+      transition: all 0.2s ease;
+    }
+    .btn:hover {
+      background: rgba(18, 52, 60, 0.9);
+      border-color: rgba(77, 208, 225, 0.6);
+      color: #ffffff;
+      transform: translateY(-1px);
+    }
+    .btn:active {
+      transform: translateY(0);
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container">
+    <canvas id="display"></canvas>
+    
+    <div id="ui-overlay">
+      <h1>錦鯉 · Nishikigoi Pond</h1>
+      <p>320×240 Procedural Canvas 2D · Cloud Shadows · Click pond to ripple</p>
+    </div>
+
+    <div id="controls">
+      <button class="btn" id="feed-btn">Feed Pond</button>
+      <button class="btn" id="cloud-btn" title="Toggle Cloud Shadows">Clouds: ON</button>
+      <button class="btn" id="pause-btn">Pause</button>
+      <button class="btn" id="fullscreen-btn">Fullscreen</button>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var LOGICAL_W = 320;
+      var LOGICAL_H = 240;
+
+      var POND_X1 = 14;
+      var POND_Y1 = 14;
+      var POND_X2 = 306;
+      var POND_Y2 = 226;
+      var POND_W = POND_X2 - POND_X1;
+      var POND_H = POND_Y2 - POND_Y1;
+
+      var displayCanvas = document.getElementById("display");
+      var dCtx = displayCanvas.getContext("2d");
+
+      var offCanvas = document.createElement("canvas");
+      offCanvas.width = LOGICAL_W;
+      offCanvas.height = LOGICAL_H;
+      var ctx = offCanvas.getContext("2d", { alpha: false });
+
+      var bgCanvas = document.createElement("canvas");
+      bgCanvas.width = LOGICAL_W;
+      bgCanvas.height = LOGICAL_H;
+      var bgCtx = bgCanvas.getContext("2d", { alpha: false });
+
+      var causticW = 160;
+      var causticH = 120;
+      var causticCanvas = document.createElement("canvas");
+      causticCanvas.width = causticW;
+      causticCanvas.height = causticH;
+      var causticCtx = causticCanvas.getContext("2d");
+
+      var cloudCanvas = document.createElement("canvas");
+      cloudCanvas.width = LOGICAL_W;
+      cloudCanvas.height = LOGICAL_H;
+      var cloudCtx = cloudCanvas.getContext("2d");
+
+      var cloudShadowsEnabled = true;
+
+      var isPaused = false;
+      var displayScale = 1;
+      var destX = 0;
+      var destY = 0;
+      var destW = 320;
+      var destH = 240;
+
+      var isMouseDown = false;
+      var lastMouseX = -1;
+      var lastMouseY = -1;
+
+      function Mulberry32(seed) {
+        var s = seed >>> 0;
+        return function () {
+          s = (s + 0x6d2b79f5) >>> 0;
+          var t = Math.imul(s ^ (s >>> 15), 1 | s);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+
+      var MAX_RIPPLES = 32;
+      var ripples = new Array(MAX_RIPPLES);
+      for (var r_idx = 0; r_idx < MAX_RIPPLES; r_idx++) {
+        ripples[r_idx] = {
+          active: false,
+          x: 0,
+          y: 0,
+          radius: 0,
+          maxRadius: 0,
+          growthSpeed: 0,
+          intensity: 0,
+          life: 0,
+          maxLife: 0,
+          arcStart1: 0,
+          arcEnd1: 0,
+          arcStart2: 0,
+          arcEnd2: 0
+        };
+      }
+
+      function spawnRipple(x, y, strength) {
+        strength = strength || 1.0;
+        for (var i = 0; i < MAX_RIPPLES; i++) {
+          if (!ripples[i].active) {
+            var rip = ripples[i];
+            rip.active = true;
+            rip.x = Math.max(POND_X1 + 5, Math.min(POND_X2 - 5, x));
+            rip.y = Math.max(POND_Y1 + 5, Math.min(POND_Y2 - 5, y));
+            rip.radius = 1.0;
+            rip.maxRadius = 14 + strength * 22;
+            rip.growthSpeed = 0.55 + Math.random() * 0.25;
+            rip.intensity = Math.min(1.0, 0.4 + strength * 0.6);
+            rip.life = 0;
+            rip.maxLife = Math.floor(45 + strength * 45);
+            var a = Math.random() * Math.PI * 2;
+            rip.arcStart1 = a;
+            rip.arcEnd1 = a + 2.2 + Math.random() * 1.5;
+            rip.arcStart2 = a + Math.PI + 0.3;
+            rip.arcEnd2 = rip.arcStart2 + 2.0 + Math.random() * 1.2;
+            break;
+          }
+        }
+      }
+
+      var MAX_BUBBLES = 20;
+      var bubbles = new Array(MAX_BUBBLES);
+      for (var b_idx = 0; b_idx < MAX_BUBBLES; b_idx++) {
+        bubbles[b_idx] = {
+          active: false,
+          x: 0,
+          y: 0,
+          vx: 0,
+          vy: 0,
+          size: 1,
+          life: 0,
+          maxLife: 0,
+          depth: 0.5
+        };
+      }
+
+      function spawnBubble(x, y, depth) {
+        for (var i = 0; i < MAX_BUBBLES; i++) {
+          if (!bubbles[i].active) {
+            var b = bubbles[i];
+            b.active = true;
+            b.x = x + (Math.random() - 0.5) * 3;
+            b.y = y + (Math.random() - 0.5) * 3;
+            b.vx = (Math.random() - 0.5) * 0.15;
+            b.vy = -0.35 - Math.random() * 0.4;
+            b.size = 0.8 + Math.random() * 1.2;
+            b.life = 0;
+            b.maxLife = 50 + Math.floor(Math.random() * 60);
+            b.depth = depth !== undefined ? depth : 0.4;
+            break;
+          }
+        }
+      }
+
+      var MAX_PARTICLES = 80;
+      var particles = new Array(MAX_PARTICLES);
+      for (var p_idx = 0; p_idx < MAX_PARTICLES; p_idx++) {
+        particles[p_idx] = {
+          x: POND_X1 + Math.random() * POND_W,
+          y: POND_Y1 + Math.random() * POND_H,
+          vx: (Math.random() - 0.45) * 0.08,
+          vy: (Math.random() - 0.5) * 0.05,
+          size: 0.6 + Math.random() * 1.0,
+          depth: Math.random(),
+          brightness: 0.3 + Math.random() * 0.5,
+          osc: Math.random() * Math.PI * 2
+        };
+      }
+
+      var MAX_FOOD = 12;
+      var foodPellets = new Array(MAX_FOOD);
+      for (var f_idx = 0; f_idx < MAX_FOOD; f_idx++) {
+        foodPellets[f_idx] = {
+          active: false,
+          x: 0,
+          y: 0,
+          vx: 0,
+          vy: 0,
+          life: 0,
+          maxLife: 400
+        };
+      }
+
+      function dropFood(x, y) {
+        for (var i = 0; i < MAX_FOOD; i++) {
+          if (!foodPellets[i].active) {
+            var f = foodPellets[i];
+            f.active = true;
+            f.x = x + (Math.random() - 0.5) * 6;
+            f.y = y + (Math.random() - 0.5) * 6;
+            f.vx = (Math.random() - 0.5) * 0.2;
+            f.vy = (Math.random() - 0.5) * 0.2;
+            f.life = 0;
+            f.maxLife = 360 + Math.floor(Math.random() * 120);
+            spawnRipple(f.x, f.y, 0.4);
+            break;
+          }
+        }
+      }
+
+      var rocks = [];
+      var plants = [];
+      var lilyPads = [];
+
+      function initScenery() {
+        var rng = Mulberry32(104859);
+
+        rocks = [];
+        var rockConfigs = [
+          { x: 45, y: 55, r: 18, color: "#363a3d", dark: "#182024" },
+          { x: 62, y: 72, r: 11, color: "#42484a", dark: "#1b2226" },
+          { x: 268, y: 60, r: 21, color: "#3d3e38", dark: "#1a1e1c" },
+          { x: 284, y: 82, r: 13, color: "#484942", dark: "#1f2320" },
+          { x: 50, y: 185, r: 24, color: "#383935", dark: "#161c1a" },
+          { x: 74, y: 198, r: 14, color: "#444640", dark: "#1c221e" },
+          { x: 260, y: 175, r: 22, color: "#3a3c39", dark: "#171c1b" },
+          { x: 240, y: 195, r: 15, color: "#424744", dark: "#1a211e" },
+          { x: 160, y: 205, r: 16, color: "#333b3d", dark: "#141d20" },
+          { x: 182, y: 48, r: 14, color: "#3a4042", dark: "#172023" }
+        ];
+
+        for (var i = 0; i < rockConfigs.length; i++) {
+          var cfg = rockConfigs[i];
+          var numVerts = 10;
+          var verts = [];
+          for (var v = 0; v < numVerts; v++) {
+            var ang = (v / numVerts) * Math.PI * 2;
+            var rad = cfg.r * (0.8 + rng() * 0.4);
+            verts.push({
+              x: Math.cos(ang) * rad,
+              y: Math.sin(ang) * rad * 0.85
+            });
+          }
+          rocks.push({
+            x: cfg.x,
+            y: cfg.y,
+            r: cfg.r,
+            verts: verts,
+            color: cfg.color,
+            dark: cfg.dark,
+            mossPatches: [
+              { ox: -cfg.r * 0.3, oy: -cfg.r * 0.3, r: cfg.r * 0.35 },
+              { ox: cfg.r * 0.2, oy: -cfg.r * 0.2, r: cfg.r * 0.25 }
+            ]
+          });
+        }
+
+        plants = [];
+        var plantBases = [
+          { x: 24, y: 80, count: 6, maxH: 45, hue: "#1e4430" },
+          { x: 30, y: 140, count: 7, maxH: 52, hue: "#214d36" },
+          { x: 290, y: 120, count: 8, maxH: 48, hue: "#1f4732" },
+          { x: 285, y: 160, count: 6, maxH: 40, hue: "#24523a" },
+          { x: 120, y: 220, count: 5, maxH: 34, hue: "#204631" },
+          { x: 200, y: 222, count: 6, maxH: 36, hue: "#1b3f2b" }
+        ];
+
+        for (var pb = 0; pb < plantBases.length; pb++) {
+          var base = plantBases[pb];
+          for (var k = 0; k < base.count; k++) {
+            plants.push({
+              bx: base.x + (rng() - 0.5) * 16,
+              by: base.y + (rng() - 0.5) * 8,
+              height: base.maxH * (0.7 + rng() * 0.5),
+              curve: (rng() - 0.5) * 18,
+              phase: rng() * Math.PI * 2,
+              speed: 1.2 + rng() * 0.8,
+              width: 1.4 + rng() * 1.0,
+              color: base.hue
+            });
+          }
+        }
+
+        lilyPads = [
+          { x: 42, y: 44, rx: 17, ry: 13, rot: 0.4, notch: 0.85, hasFlower: true },
+          { x: 68, y: 38, rx: 14, ry: 11, rot: 1.2, notch: 0.7, hasFlower: false },
+          { x: 32, y: 64, rx: 13, ry: 10, rot: -0.6, notch: 0.9, hasFlower: false },
+          { x: 278, y: 46, rx: 18, ry: 14, rot: 2.1, notch: 0.8, hasFlower: false },
+          { x: 294, y: 66, rx: 15, ry: 11, rot: -1.4, notch: 0.75, hasFlower: true },
+          { x: 265, y: 198, rx: 16, ry: 12, rot: 0.7, notch: 0.85, hasFlower: false },
+          { x: 288, y: 210, rx: 12, ry: 9, rot: -0.3, notch: 0.7, hasFlower: false }
+        ];
+      }
+
+      var cloudSeed = 94821;
+      function generateCloudPuffs(seed, scale) {
+        var rng = Mulberry32(seed);
+        var numPuffs = 6 + Math.floor(rng() * 4);
+        var puffs = [];
+        for (var p = 0; p < numPuffs; p++) {
+          var ang = (p / numPuffs) * Math.PI * 2 + (rng() - 0.5) * 0.75;
+          var dist = (rng() * 28 + (p === 0 ? 0 : 10)) * scale;
+          var rx = (32 + rng() * 34) * scale;
+          var ry = (22 + rng() * 24) * scale;
+          puffs.push({
+            ox: Math.cos(ang) * dist * 1.35,
+            oy: Math.sin(ang) * dist * 0.85,
+            rx: rx,
+            ry: ry,
+            density: 0.32 + rng() * 0.20,
+            phase: rng() * Math.PI * 2,
+            pulseSpeed: 0.0003 + rng() * 0.0004
+          });
+        }
+        return puffs;
+      }
+
+      var clouds = [
+        {
+          x: 100,
+          y: 80,
+          vx: 0.042,
+          vy: 0.020,
+          width: 150,
+          height: 100,
+          baseOpacity: 0.92,
+          scale: 1.15,
+          puffs: generateCloudPuffs(cloudSeed++, 1.15)
+        },
+        {
+          x: -120,
+          y: -40,
+          vx: 0.038,
+          vy: 0.018,
+          width: 170,
+          height: 110,
+          baseOpacity: 0.95,
+          scale: 1.3,
+          puffs: generateCloudPuffs(cloudSeed++, 1.3)
+        },
+        {
+          x: -270,
+          y: -110,
+          vx: 0.046,
+          vy: 0.022,
+          width: 135,
+          height: 95,
+          baseOpacity: 0.85,
+          scale: 1.0,
+          puffs: generateCloudPuffs(cloudSeed++, 1.0)
+        },
+        {
+          x: 240,
+          y: 190,
+          vx: 0.052,
+          vy: 0.025,
+          width: 90,
+          height: 65,
+          baseOpacity: 0.70,
+          scale: 0.75,
+          puffs: generateCloudPuffs(cloudSeed++, 0.75)
+        }
+      ];
+
+      function preRenderBackground() {
+        var rng = Mulberry32(42949);
+
+        bgCtx.fillStyle = "#1c1b18";
+        bgCtx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+
+        var paverCols = ["#383733", "#2e2d29", "#44423d", "#32312c", "#4c4a44"];
+        var paverW = 24;
+        var paverH = 14;
+
+        for (var px = 0; px < LOGICAL_W; px += paverW + 2) {
+          for (var py = 0; py < LOGICAL_H; py += paverH + 2) {
+            if (px < POND_X1 - 2 || px > POND_X2 - 12 || py < POND_Y1 - 2 || py > POND_Y2 - 12) {
+              var cIdx = Math.floor(rng() * paverCols.length);
+              bgCtx.fillStyle = paverCols[cIdx];
+              bgCtx.fillRect(px, py, paverW, paverH);
+              bgCtx.fillStyle = "rgba(255, 255, 255, 0.08)";
+              bgCtx.fillRect(px, py, paverW, 1);
+              bgCtx.fillRect(px, py, 1, paverH);
+              bgCtx.fillStyle = "rgba(0, 0, 0, 0.35)";
+              bgCtx.fillRect(px, py + paverH - 1, paverW, 1);
+              bgCtx.fillRect(px + paverW - 1, py, 1, paverH);
+            }
+          }
+        }
+
+        bgCtx.fillStyle = "#22211c";
+        bgCtx.fillRect(POND_X1 - 3, POND_Y1 - 3, POND_W + 6, POND_H + 6);
+        bgCtx.fillStyle = "#111413";
+        bgCtx.fillRect(POND_X1 - 1, POND_Y1 - 1, POND_W + 2, POND_H + 2);
+
+        var floorGrad = bgCtx.createRadialGradient(
+          POND_X1 + POND_W * 0.5,
+          POND_Y1 + POND_H * 0.45,
+          20,
+          POND_X1 + POND_W * 0.5,
+          POND_Y1 + POND_H * 0.5,
+          POND_W * 0.65
+        );
+        floorGrad.addColorStop(0, "#122a2d");
+        floorGrad.addColorStop(0.65, "#0b1f22");
+        floorGrad.addColorStop(1, "#071618");
+        bgCtx.fillStyle = floorGrad;
+        bgCtx.fillRect(POND_X1, POND_Y1, POND_W, POND_H);
+
+        for (var p = 0; p < 900; p++) {
+          var sx = POND_X1 + 4 + rng() * (POND_W - 8);
+          var sy = POND_Y1 + 4 + rng() * (POND_H - 8);
+          var sAlpha = 0.06 + rng() * 0.12;
+          var sLight = rng() > 0.45;
+          bgCtx.fillStyle = sLight
+            ? "rgba(180, 210, 205, " + sAlpha + ")"
+            : "rgba(3, 10, 12, " + sAlpha * 1.5 + ")";
+          bgCtx.fillRect(Math.floor(sx), Math.floor(sy), 1, 1);
+        }
+
+        bgCtx.fillStyle = "rgba(2, 8, 10, 0.6)";
+        bgCtx.fillRect(POND_X1, POND_Y1, POND_W, 3);
+        bgCtx.fillRect(POND_X1, POND_Y1, 3, POND_H);
+        bgCtx.fillRect(POND_X1, POND_Y2 - 3, POND_W, 3);
+        bgCtx.fillRect(POND_X2 - 3, POND_Y1, 3, POND_H);
+
+        for (var r_i = 0; r_i < rocks.length; r_i++) {
+          var rock = rocks[r_i];
+
+          bgCtx.fillStyle = "rgba(3, 8, 10, 0.75)";
+          bgCtx.beginPath();
+          bgCtx.ellipse(rock.x + 2, rock.y + 4, rock.r * 1.05, rock.r * 0.85, 0, 0, Math.PI * 2);
+          bgCtx.fill();
+
+          bgCtx.fillStyle = rock.color;
+          bgCtx.beginPath();
+          for (var vi = 0; vi < rock.verts.length; vi++) {
+            var vx = rock.x + rock.verts[vi].x;
+            var vy = rock.y + rock.verts[vi].y;
+            if (vi === 0) bgCtx.moveTo(vx, vy);
+            else bgCtx.lineTo(vx, vy);
+          }
+          bgCtx.closePath();
+          bgCtx.fill();
+
+          bgCtx.fillStyle = rock.dark;
+          bgCtx.beginPath();
+          bgCtx.ellipse(rock.x, rock.y + rock.r * 0.25, rock.r * 0.8, rock.r * 0.5, 0, 0, Math.PI);
+          bgCtx.fill();
+
+          for (var m = 0; m < rock.mossPatches.length; m++) {
+            var mp = rock.mossPatches[m];
+            bgCtx.fillStyle = "rgba(36, 68, 42, 0.7)";
+            bgCtx.beginPath();
+            bgCtx.arc(rock.x + mp.ox, rock.y + mp.oy, mp.r, 0, Math.PI * 2);
+            bgCtx.fill();
+            bgCtx.fillStyle = "rgba(65, 115, 75, 0.45)";
+            bgCtx.beginPath();
+            bgCtx.arc(rock.x + mp.ox - 1, rock.y + mp.oy - 1, mp.r * 0.5, 0, Math.PI * 2);
+            bgCtx.fill();
+          }
+
+          bgCtx.strokeStyle = "rgba(200, 225, 220, 0.14)";
+          bgCtx.lineWidth = 1;
+          bgCtx.stroke();
+        }
+      }
+
+      var NUM_SEGMENTS = 12;
+      var BASE_SEG_RADII = [2.2, 3.8, 5.2, 6.2, 6.6, 6.1, 5.3, 4.3, 3.2, 2.2, 1.5, 1.1];
+
+      var NUM_KOI = 10;
+      var kois = [];
+
+      function createKoi(index) {
+        var rng = Mulberry32(202509 + index * 1337);
+
+        var variety = index % 10;
+        var scale = 0.88 + rng() * 0.32;
+        var spineLength = (40 + rng() * 14) * scale;
+        var segDist = spineLength / (NUM_SEGMENTS - 1);
+
+        var posX = POND_X1 + 40 + rng() * (POND_W - 80);
+        var posY = POND_Y1 + 35 + rng() * (POND_H - 70);
+        var heading = rng() * Math.PI * 2;
+
+        var baseDepth = 0.15 + rng() * 0.7;
+        var targetDepth = baseDepth;
+
+        var segments = new Array(NUM_SEGMENTS);
+        for (var s = 0; s < NUM_SEGMENTS; s++) {
+          segments[s] = {
+            x: posX - Math.cos(heading) * (s * segDist),
+            y: posY - Math.sin(heading) * (s * segDist),
+            radius: BASE_SEG_RADII[s] * scale,
+            angle: heading
+          };
+        }
+
+        var baseColor = "#f4f0e6";
+        var hiColor = "#c52820";
+        var sumiColor = "#121517";
+        var goldColor = "#d69e2e";
+        var asagiBlue = "#384d54";
+
+        if (variety === 5) {
+          baseColor = "#df9d28";
+          hiColor = "#f6c445";
+        } else if (variety === 6) {
+          baseColor = "#ede9de";
+          hiColor = "#ffffff";
+        } else if (variety === 4 || variety === 8) {
+          baseColor = "#121417";
+          hiColor = variety === 4 ? "#c62828" : "#d99b26";
+        } else if (variety === 9) {
+          baseColor = "#d8d4cc";
+          hiColor = "#c63928";
+        }
+
+        var patches = [];
+        if (variety === 0) {
+          patches.push({ segStart: 0.8, segEnd: 3.2, width: 1.0, color: "#c62828" });
+          patches.push({ segStart: 4.0, segEnd: 6.2, width: 0.95, color: "#d8382b" });
+          patches.push({ segStart: 7.2, segEnd: 9.0, width: 0.75, color: "#c62828" });
+        } else if (variety === 1) {
+          patches.push({ segStart: 0.9, segEnd: 8.5, width: 0.88, color: "#d32f2f", zigzag: true });
+        } else if (variety === 2 || variety === 3) {
+          patches.push({ segStart: 1.0, segEnd: 3.8, width: 0.96, color: "#c62828" });
+          patches.push({ segStart: 4.8, segEnd: 7.2, width: 0.9, color: "#d32f2f" });
+          patches.push({ segStart: 7.8, segEnd: 9.2, width: 0.7, color: "#c62828" });
+          patches.push({ segStart: 2.8, segEnd: 3.6, width: 0.55, side: -1, color: sumiColor });
+          patches.push({ segStart: 5.2, segEnd: 6.0, width: 0.6, side: 1, color: sumiColor });
+          patches.push({ segStart: 6.8, segEnd: 7.6, width: 0.5, side: -1, color: sumiColor });
+        } else if (variety === 4) {
+          patches.push({ segStart: 1.2, segEnd: 4.5, width: 0.95, color: "#c62828" });
+          patches.push({ segStart: 5.5, segEnd: 8.2, width: 0.9, color: "#d32f2f" });
+          patches.push({ segStart: 0.2, segEnd: 1.2, width: 0.6, color: "#f2efe9" });
+          patches.push({ segStart: 4.2, segEnd: 5.4, width: 0.75, color: "#f2efe9" });
+          patches.push({ segStart: 8.2, segEnd: 9.8, width: 0.7, color: "#f2efe9" });
+          patches.push({ segStart: 0.5, segEnd: 2.2, width: 0.45, color: sumiColor });
+        } else if (variety === 7) {
+          patches.push({ segStart: 0.6, segEnd: 1.8, width: 0.7, color: "#b71c1c", isCircle: true });
+        } else if (variety === 8) {
+          patches.push({ segStart: 1.2, segEnd: 3.5, width: 0.85, color: "#e5a11f" });
+          patches.push({ segStart: 4.5, segEnd: 6.8, width: 0.85, color: "#f1af2c" });
+          patches.push({ segStart: 7.5, segEnd: 9.2, width: 0.7, color: "#e5a11f" });
+        } else if (variety === 9) {
+          patches.push({ segStart: 1.5, segEnd: 9.0, width: 0.55, color: asagiBlue });
+          patches.push({ segStart: 1.0, segEnd: 2.2, width: 0.8, side: -1, color: "#c63928" });
+          patches.push({ segStart: 1.0, segEnd: 2.2, width: 0.8, side: 1, color: "#c63928" });
+        }
+
+        return {
+          id: index,
+          variety: variety,
+          x: posX,
+          y: posY,
+          vx: Math.cos(heading) * 0.4,
+          vy: Math.sin(heading) * 0.4,
+          heading: heading,
+          targetHeading: heading,
+          turnSpeed: 0.025 + rng() * 0.02,
+          speed: 0.35 + rng() * 0.25,
+          targetSpeed: 0.45,
+          scale: scale,
+          spineLength: spineLength,
+          segDist: segDist,
+          segments: segments,
+          swimPhase: rng() * Math.PI * 2,
+          swimFreq: 0.11 + rng() * 0.03,
+          tailAmplitude: 1.6 + rng() * 0.6,
+          pecPhase: rng() * Math.PI * 2,
+          pecFreq: 0.08 + rng() * 0.03,
+          depth: baseDepth,
+          targetDepth: targetDepth,
+          depthChangeTimer: 60 + Math.floor(rng() * 180),
+          turnTimer: 30 + Math.floor(rng() * 120),
+          state: "CRUISE",
+          baseColor: baseColor,
+          hiColor: hiColor,
+          sumiColor: sumiColor,
+          goldColor: goldColor,
+          patches: patches,
+          disturbedTimer: 0
+        };
+      }
+
+      function initKois() {
+        kois = [];
+        for (var i = 0; i < NUM_KOI; i++) {
+          kois.push(createKoi(i));
+        }
+      }
+
+      function updateSimulation() {
+        var i, j;
+
+        for (i = 0; i < MAX_PARTICLES; i++) {
+          var p = particles[i];
+          p.osc += 0.025;
+          p.x += p.vx + Math.sin(p.osc) * 0.03;
+          p.y += p.vy + Math.cos(p.osc) * 0.02;
+          if (p.x < POND_X1) p.x = POND_X2 - 2;
+          else if (p.x > POND_X2) p.x = POND_X1 + 2;
+          if (p.y < POND_Y1) p.y = POND_Y2 - 2;
+          else if (p.y > POND_Y2) p.y = POND_Y1 + 2;
+        }
+
+        for (i = 0; i < MAX_FOOD; i++) {
+          var f = foodPellets[i];
+          if (f.active) {
+            f.life++;
+            f.x += f.vx;
+            f.y += f.vy;
+            f.vx *= 0.96;
+            f.vy *= 0.96;
+
+            for (j = 0; j < NUM_KOI; j++) {
+              var k = kois[j];
+              var fdx = f.x - k.x;
+              var fdy = f.y - k.y;
+              var fdist = Math.sqrt(fdx * fdx + fdy * fdy);
+              if (fdist < 60 && fdist > 6) {
+                var foodHeading = Math.atan2(fdy, fdx);
+                var diff = foodHeading - k.heading;
+                while (diff > Math.PI) diff -= Math.PI * 2;
+                while (diff < -Math.PI) diff += Math.PI * 2;
+                k.heading += diff * 0.04;
+                k.targetDepth = Math.max(0.1, k.targetDepth - 0.01);
+              } else if (fdist <= 6) {
+                f.active = false;
+                spawnRipple(f.x, f.y, 0.6);
+                spawnBubble(f.x, f.y, 0.1);
+                k.swimPhase += 0.5;
+                break;
+              }
+            }
+
+            if (f.life >= f.maxLife) f.active = false;
+          }
+        }
+
+        for (i = 0; i < MAX_RIPPLES; i++) {
+          var rip = ripples[i];
+          if (rip.active) {
+            rip.life++;
+            rip.radius += rip.growthSpeed;
+            rip.intensity *= 0.965;
+            if (rip.life >= rip.maxLife || rip.radius >= rip.maxRadius || rip.intensity < 0.02) {
+              rip.active = false;
+            }
+          }
+        }
+
+        for (i = 0; i < MAX_BUBBLES; i++) {
+          var b = bubbles[i];
+          if (b.active) {
+            b.life++;
+            b.x += b.vx + Math.sin(b.life * 0.15) * 0.12;
+            b.y += b.vy;
+            b.depth -= 0.012;
+            if (b.depth <= 0.05 || b.life >= b.maxLife || b.y < POND_Y1 + 4) {
+              b.active = false;
+              if (b.depth <= 0.08) spawnRipple(b.x, b.y, 0.25);
+            }
+          }
+        }
+
+        for (i = 0; i < NUM_KOI; i++) {
+          var koi = kois[i];
+
+          koi.turnTimer--;
+          koi.depthChangeTimer--;
+          if (koi.disturbedTimer > 0) koi.disturbedTimer--;
+
+          if (koi.turnTimer <= 0) {
+            koi.turnTimer = 60 + Math.floor(Math.random() * 150);
+            var roll = Math.random();
+            if (roll < 0.55) {
+              koi.state = "CRUISE";
+              koi.targetHeading = koi.heading + (Math.random() - 0.5) * 0.9;
+              koi.targetSpeed = 0.35 + Math.random() * 0.3;
+            } else if (roll < 0.75) {
+              koi.state = "TURN";
+              koi.targetHeading = koi.heading + (Math.random() > 0.5 ? 1 : -1) * (0.8 + Math.random() * 0.9);
+              koi.targetSpeed = 0.4 + Math.random() * 0.35;
+            } else if (roll < 0.9) {
+              koi.state = "REST";
+              koi.targetSpeed = 0.15 + Math.random() * 0.15;
+            } else {
+              koi.state = koi.depth < 0.3 ? "SURFACE" : "CRUISE";
+            }
+          }
+
+          if (koi.depthChangeTimer <= 0) {
+            koi.depthChangeTimer = 100 + Math.floor(Math.random() * 240);
+            koi.targetDepth = 0.1 + Math.random() * 0.8;
+          }
+
+          koi.depth += (koi.targetDepth - koi.depth) * 0.015;
+
+          var margin = 28 * koi.scale;
+          var avoidX = 0;
+          var avoidY = 0;
+
+          if (koi.x < POND_X1 + margin) avoidX += (POND_X1 + margin - koi.x) * 0.06;
+          else if (koi.x > POND_X2 - margin) avoidX -= (koi.x - (POND_X2 - margin)) * 0.06;
+
+          if (koi.y < POND_Y1 + margin) avoidY += (POND_Y1 + margin - koi.y) * 0.06;
+          else if (koi.y > POND_Y2 - margin) avoidY -= (koi.y - (POND_Y2 - margin)) * 0.06;
+
+          if (avoidX !== 0 || avoidY !== 0) {
+            koi.targetHeading = Math.atan2(Math.sin(koi.heading) + avoidY, Math.cos(koi.heading) + avoidX);
+          }
+
+          var sepX = 0;
+          var sepY = 0;
+          var alignH = 0;
+          var neighborCount = 0;
+
+          for (j = 0; j < NUM_KOI; j++) {
+            if (i !== j) {
+              var other = kois[j];
+              var dx = koi.x - other.x;
+              var dy = koi.y - other.y;
+              var distSq = dx * dx + dy * dy;
+              var minDist = 22 * koi.scale;
+
+              if (distSq < minDist * minDist && distSq > 0.001) {
+                var dist = Math.sqrt(distSq);
+                var force = (minDist - dist) / minDist;
+                sepX += (dx / dist) * force * 0.35;
+                sepY += (dy / dist) * force * 0.35;
+              } else if (distSq < 55 * 55) {
+                alignH += other.heading;
+                neighborCount++;
+              }
+            }
+          }
+
+          if (neighborCount > 0 && Math.random() < 0.05) {
+            koi.targetHeading += (alignH / neighborCount - koi.heading) * 0.03;
+          }
+
+          if (sepX !== 0 || sepY !== 0) {
+            koi.targetHeading = Math.atan2(Math.sin(koi.targetHeading) + sepY, Math.cos(koi.targetHeading) + sepX);
+          }
+
+          var dHeading = koi.targetHeading - koi.heading;
+          while (dHeading > Math.PI) dHeading -= Math.PI * 2;
+          while (dHeading < -Math.PI) dHeading += Math.PI * 2;
+          koi.heading += dHeading * koi.turnSpeed;
+
+          koi.speed += (koi.targetSpeed - koi.speed) * 0.04;
+          koi.vx = Math.cos(koi.heading) * koi.speed;
+          koi.vy = Math.sin(koi.heading) * koi.speed;
+          koi.x += koi.vx;
+          koi.y += koi.vy;
+
+          koi.x = Math.max(POND_X1 + 10, Math.min(POND_X2 - 10, koi.x));
+          koi.y = Math.max(POND_Y1 + 10, Math.min(POND_Y2 - 10, koi.y));
+
+          koi.swimPhase += koi.swimFreq * (koi.speed * 2.2 + 0.4);
+          koi.pecPhase += koi.pecFreq * (koi.speed * 1.5 + 0.5);
+
+          koi.segments[0].x = koi.x;
+          koi.segments[0].y = koi.y;
+          koi.segments[0].angle = koi.heading;
+
+          var prevX = koi.x;
+          var prevY = koi.y;
+          var segDistance = koi.segDist;
+
+          for (var s = 1; s < NUM_SEGMENTS; s++) {
+            var seg = koi.segments[s];
+            var sdx = seg.x - prevX;
+            var sdy = seg.y - prevY;
+            var curDist = Math.sqrt(sdx * sdx + sdy * sdy);
+            if (curDist < 0.001) curDist = 0.001;
+
+            var segRatio = s / (NUM_SEGMENTS - 1);
+            var waveAmp = koi.tailAmplitude * (segRatio * segRatio) * (0.8 + koi.speed * 0.9);
+            var waveOffset = Math.sin(koi.swimPhase - s * 0.65) * waveAmp;
+
+            var angle = Math.atan2(sdy, sdx);
+            seg.angle = angle;
+
+            var normalX = -Math.sin(angle);
+            var normalY = Math.cos(angle);
+
+            var targetX = prevX + Math.cos(angle) * segDistance + normalX * waveOffset * 0.4;
+            var targetY = prevY + Math.sin(angle) * segDistance + normalY * waveOffset * 0.4;
+
+            seg.x += (targetX - seg.x) * 0.72;
+            seg.y += (targetY - seg.y) * 0.72;
+
+            prevX = seg.x;
+            prevY = seg.y;
+          }
+
+          if (koi.depth < 0.22) {
+            if (Math.random() < 0.045 && koi.speed > 0.3) {
+              spawnRipple(koi.segments[2].x, koi.segments[2].y, (0.24 - koi.depth) * 2.5);
+            }
+            if (Math.random() < 0.012) {
+              spawnBubble(koi.segments[0].x, koi.segments[0].y, koi.depth);
+            }
+          }
+        }
+
+        for (var c = 0; c < clouds.length; c++) {
+          var cloud = clouds[c];
+          cloud.x += cloud.vx;
+          cloud.y += cloud.vy;
+          if (cloud.x - cloud.width * 0.6 > LOGICAL_W + 50 || cloud.y - cloud.height * 0.6 > LOGICAL_H + 50) {
+            cloud.x = -cloud.width * 0.75 - Math.random() * 80;
+            cloud.y = -cloud.height * 0.75 + (Math.random() - 0.5) * 120;
+            cloudSeed += 13;
+            cloud.puffs = generateCloudPuffs(cloudSeed, cloud.scale);
+          }
+        }
+      }
+
+      var causticTime = 0;
+      function renderCaustics(time) {
+        causticTime = time * 0.0012;
+        causticCtx.clearRect(0, 0, causticW, causticH);
+
+        causticCtx.save();
+        causticCtx.lineWidth = 2.4;
+
+        var numBands = 9;
+        for (var b = 0; b < numBands; b++) {
+          causticCtx.beginPath();
+          var startY = (b / numBands) * causticH;
+          for (var cx = 0; cx <= causticW; cx += 8) {
+            var cy = startY +
+              Math.sin(cx * 0.08 + causticTime * 1.6 + b) * 5 +
+              Math.cos(cx * 0.04 - causticTime * 1.2 + b * 1.3) * 6;
+            if (cx === 0) causticCtx.moveTo(cx, cy);
+            else causticCtx.lineTo(cx, cy);
+          }
+          causticCtx.strokeStyle = "rgba(80, 227, 210, 0.08)";
+          causticCtx.stroke();
+        }
+
+        for (var b2 = 0; b2 < numBands; b2++) {
+          causticCtx.beginPath();
+          var startX = (b2 / numBands) * causticW;
+          for (var cy2 = 0; cy2 <= causticH; cy2 += 8) {
+            var cx2 = startX +
+              Math.sin(cy2 * 0.07 - causticTime * 1.4 + b2) * 5 +
+              Math.cos(cy2 * 0.05 + causticTime * 1.1 + b2 * 0.9) * 5;
+            if (cy2 === 0) causticCtx.moveTo(cx2, cy2);
+            else causticCtx.lineTo(cx2, cy2);
+          }
+          causticCtx.strokeStyle = "rgba(100, 240, 225, 0.07)";
+          causticCtx.stroke();
+        }
+        causticCtx.restore();
+      }
+
+      function renderKoi(ctx, koi, isShadow) {
+        var s, seg;
+        var numSegs = NUM_SEGMENTS;
+        var segments = koi.segments;
+
+        var depth = koi.depth;
+        var depthDarken = 1.0 - depth * 0.45;
+        var depthAlpha = isShadow ? 0.28 * (1.0 - depth * 0.4) : 1.0;
+
+        var leftPts = new Array(numSegs);
+        var rightPts = new Array(numSegs);
+
+        for (s = 0; s < numSegs; s++) {
+          seg = segments[s];
+          var rad = seg.radius * (1.0 - depth * 0.12);
+
+          var nx, ny;
+          if (s === 0) {
+            nx = -Math.sin(koi.heading);
+            ny = Math.cos(koi.heading);
+          } else {
+            var dx = seg.x - segments[s - 1].x;
+            var dy = seg.y - segments[s - 1].y;
+            var len = Math.sqrt(dx * dx + dy * dy);
+            if (len < 0.001) len = 0.001;
+            nx = -dy / len;
+            ny = dx / len;
+          }
+
+          leftPts[s] = { x: seg.x + nx * rad, y: seg.y + ny * rad };
+          rightPts[s] = { x: seg.x - nx * rad, y: seg.y - ny * rad };
+        }
+
+        ctx.save();
+
+        if (isShadow) {
+          var shadowOffX = 6 + (1.0 - depth) * 12;
+          var shadowOffY = 8 + (1.0 - depth) * 16;
+          ctx.translate(shadowOffX, shadowOffY);
+          ctx.fillStyle = "rgba(4, 12, 14, " + depthAlpha + ")";
+        }
+
+        // Pectoral Fins (Scaled naturally: ~18-20% of spine length)
+        var pecSeg = segments[2];
+        var finStroke = Math.sin(koi.pecPhase) * 0.28;
+        var pecLength = (7.5 + koi.scale * 2.2) * (1.0 - depth * 0.14);
+
+        ctx.save();
+        ctx.fillStyle = isShadow ? "rgba(4, 12, 14, " + depthAlpha + ")" : "rgba(240, 245, 245, " + (0.55 * depthDarken) + ")";
+        ctx.beginPath();
+        var leftRootX = leftPts[2].x;
+        var leftRootY = leftPts[2].y;
+        var leftFinAngle = pecSeg.angle + 1.85 + finStroke;
+        var leftTipX = leftRootX + Math.cos(leftFinAngle) * pecLength;
+        var leftTipY = leftRootY + Math.sin(leftFinAngle) * pecLength;
+        var leftMidX = leftRootX + Math.cos(leftFinAngle - 0.35) * (pecLength * 0.72);
+        var leftMidY = leftRootY + Math.sin(leftFinAngle - 0.35) * (pecLength * 0.72);
+
+        ctx.moveTo(leftRootX, leftRootY);
+        ctx.quadraticCurveTo(leftMidX, leftMidY, leftTipX, leftTipY);
+        ctx.quadraticCurveTo(leftRootX + Math.cos(leftFinAngle + 0.25) * (pecLength * 0.48),
+                             leftRootY + Math.sin(leftFinAngle + 0.25) * (pecLength * 0.48),
+                             leftRootX - Math.cos(pecSeg.angle) * 1.8,
+                             leftRootY - Math.sin(pecSeg.angle) * 1.8);
+        ctx.closePath();
+        ctx.fill();
+        if (!isShadow) {
+          ctx.strokeStyle = "rgba(220, 240, 235, " + (0.45 * depthDarken) + ")";
+          ctx.lineWidth = 0.5;
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        ctx.save();
+        ctx.fillStyle = isShadow ? "rgba(4, 12, 14, " + depthAlpha + ")" : "rgba(240, 245, 245, " + (0.55 * depthDarken) + ")";
+        ctx.beginPath();
+        var rightRootX = rightPts[2].x;
+        var rightRootY = rightPts[2].y;
+        var rightFinAngle = pecSeg.angle - 1.85 - finStroke;
+        var rightTipX = rightRootX + Math.cos(rightFinAngle) * pecLength;
+        var rightTipY = rightRootY + Math.sin(rightFinAngle) * pecLength;
+        var rightMidX = rightRootX + Math.cos(rightFinAngle + 0.35) * (pecLength * 0.72);
+        var rightMidY = rightRootY + Math.sin(rightFinAngle + 0.35) * (pecLength * 0.72);
+
+        ctx.moveTo(rightRootX, rightRootY);
+        ctx.quadraticCurveTo(rightMidX, rightMidY, rightTipX, rightTipY);
+        ctx.quadraticCurveTo(rightRootX + Math.cos(rightFinAngle - 0.25) * (pecLength * 0.48),
+                              rightRootY + Math.sin(rightFinAngle - 0.25) * (pecLength * 0.48),
+                              rightRootX - Math.cos(pecSeg.angle) * 1.8,
+                              rightRootY - Math.sin(pecSeg.angle) * 1.8);
+        ctx.closePath();
+        ctx.fill();
+        if (!isShadow) {
+          ctx.strokeStyle = "rgba(220, 240, 235, " + (0.45 * depthDarken) + ")";
+          ctx.lineWidth = 0.5;
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        var tailRoot = segments[numSegs - 1];
+        var tailPrev = segments[numSegs - 2];
+        var tailAngle = Math.atan2(tailRoot.y - tailPrev.y, tailRoot.x - tailPrev.x);
+        var tailLength = (16 + koi.scale * 6) * (1.0 - depth * 0.12);
+
+        ctx.save();
+        ctx.fillStyle = isShadow ? "rgba(4, 12, 14, " + depthAlpha + ")" : "rgba(245, 248, 245, " + (0.65 * depthDarken) + ")";
+
+        ctx.beginPath();
+        ctx.moveTo(tailRoot.x, tailRoot.y);
+        var upperTipX = tailRoot.x + Math.cos(tailAngle + 0.42) * tailLength;
+        var upperTipY = tailRoot.y + Math.sin(tailAngle + 0.42) * tailLength;
+        ctx.quadraticCurveTo(
+          tailRoot.x + Math.cos(tailAngle + 0.65) * (tailLength * 0.6),
+          tailRoot.y + Math.sin(tailAngle + 0.65) * (tailLength * 0.6),
+          upperTipX,
+          upperTipY
+        );
+
+        var notchDist = tailLength * 0.62;
+        var notchX = tailRoot.x + Math.cos(tailAngle) * notchDist;
+        var notchY = tailRoot.y + Math.sin(tailAngle) * notchDist;
+        ctx.quadraticCurveTo(
+          tailRoot.x + Math.cos(tailAngle + 0.15) * (tailLength * 0.8),
+          tailRoot.y + Math.sin(tailAngle + 0.15) * (tailLength * 0.8),
+          notchX,
+          notchY
+        );
+
+        var lowerTipX = tailRoot.x + Math.cos(tailAngle - 0.42) * tailLength;
+        var lowerTipY = tailRoot.y + Math.sin(tailAngle - 0.42) * tailLength;
+        ctx.quadraticCurveTo(
+          tailRoot.x + Math.cos(tailAngle - 0.15) * (tailLength * 0.8),
+          tailRoot.y + Math.sin(tailAngle - 0.15) * (tailLength * 0.8),
+          lowerTipX,
+          lowerTipY
+        );
+        ctx.quadraticCurveTo(
+          tailRoot.x + Math.cos(tailAngle - 0.65) * (tailLength * 0.6),
+          tailRoot.y + Math.sin(tailAngle - 0.65) * (tailLength * 0.6),
+          tailRoot.x,
+          tailRoot.y
+        );
+        ctx.closePath();
+        ctx.fill();
+
+        if (!isShadow) {
+          ctx.strokeStyle = "rgba(220, 235, 230, " + (0.35 * depthDarken) + ")";
+          ctx.lineWidth = 0.5;
+          ctx.beginPath();
+          ctx.moveTo(tailRoot.x, tailRoot.y);
+          ctx.lineTo(upperTipX, upperTipY);
+          ctx.moveTo(tailRoot.x, tailRoot.y);
+          ctx.lineTo(notchX, notchY);
+          ctx.moveTo(tailRoot.x, tailRoot.y);
+          ctx.lineTo(lowerTipX, lowerTipY);
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        ctx.beginPath();
+        var nose = segments[0];
+        ctx.arc(nose.x, nose.y, nose.radius * (1.0 - depth * 0.12), koi.heading - Math.PI / 2, koi.heading + Math.PI / 2);
+
+        for (s = 1; s < numSegs; s++) {
+          ctx.lineTo(rightPts[s].x, rightPts[s].y);
+        }
+        ctx.lineTo(segments[numSegs - 1].x, segments[numSegs - 1].y);
+        for (s = numSegs - 1; s >= 1; s--) {
+          ctx.lineTo(leftPts[s].x, leftPts[s].y);
+        }
+        ctx.closePath();
+
+        if (isShadow) {
+          ctx.fill();
+          ctx.restore();
+          return;
+        }
+
+        ctx.save();
+        ctx.clip();
+
+        ctx.fillStyle = koi.baseColor;
+        ctx.fill();
+
+        var bodyGrad = ctx.createLinearGradient(
+          segments[3].x - Math.sin(koi.heading) * 6,
+          segments[3].y + Math.cos(koi.heading) * 6,
+          segments[3].x + Math.sin(koi.heading) * 6,
+          segments[3].y - Math.cos(koi.heading) * 6
+        );
+        bodyGrad.addColorStop(0, "rgba(255, 255, 255, 0.18)");
+        bodyGrad.addColorStop(0.5, "rgba(255, 255, 255, 0.0)");
+        bodyGrad.addColorStop(1, "rgba(0, 0, 0, 0.28)");
+        ctx.fillStyle = bodyGrad;
+        ctx.fill();
+
+        for (var p = 0; p < koi.patches.length; p++) {
+          var patch = koi.patches[p];
+          ctx.fillStyle = patch.color;
+
+          if (patch.isCircle) {
+            var tanchoSeg = segments[1];
+            ctx.beginPath();
+            ctx.arc(tanchoSeg.x, tanchoSeg.y, 4.2 * koi.scale, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "#9a1414";
+            ctx.beginPath();
+            ctx.arc(tanchoSeg.x, tanchoSeg.y, 2.6 * koi.scale, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            ctx.beginPath();
+            var startIdx = Math.floor(patch.segStart);
+            var endIdx = Math.min(numSegs - 1, Math.ceil(patch.segEnd));
+            var patchWidth = patch.width || 0.9;
+
+            for (s = startIdx; s <= endIdx; s++) {
+              var pSeg = segments[s];
+              var pRad = pSeg.radius * patchWidth;
+              var pt = patch.side === -1 ? leftPts[s] : (patch.side === 1 ? rightPts[s] : null);
+
+              if (pt) {
+                if (s === startIdx) ctx.moveTo(pt.x, pt.y);
+                else ctx.lineTo(pt.x, pt.y);
+              } else {
+                var pnx = -Math.sin(pSeg.angle);
+                var pny = Math.cos(pSeg.angle);
+                var px1 = pSeg.x + pnx * pRad;
+                var py1 = pSeg.y + pny * pRad;
+                if (s === startIdx) ctx.moveTo(px1, py1);
+                else ctx.lineTo(px1, py1);
+              }
+            }
+
+            for (s = endIdx; s >= startIdx; s--) {
+              var pSeg2 = segments[s];
+              var pRad2 = pSeg2.radius * patchWidth;
+              if (patch.side) {
+                ctx.lineTo(pSeg2.x, pSeg2.y);
+              } else {
+                var pnx2 = -Math.sin(pSeg2.angle);
+                var pny2 = Math.cos(pSeg2.angle);
+                ctx.lineTo(pSeg2.x - pnx2 * pRad2, pSeg2.y - pny2 * pRad2);
+              }
+            }
+            ctx.closePath();
+            ctx.fill();
+          }
+        }
+
+        if (depth < 0.65) {
+          ctx.strokeStyle = "rgba(0, 0, 0, " + (0.12 * (1.0 - depth)) + ")";
+          ctx.lineWidth = 0.5;
+          for (s = 2; s < numSegs - 2; s += 2) {
+            var scSeg = segments[s];
+            ctx.beginPath();
+            ctx.arc(scSeg.x, scSeg.y, scSeg.radius * 0.75, scSeg.angle - 0.8, scSeg.angle + 0.8);
+            ctx.stroke();
+          }
+        }
+
+        if (depth > 0.15) {
+          ctx.fillStyle = "rgba(11, 31, 36, " + (depth * 0.52) + ")";
+          ctx.fill();
+        }
+
+        ctx.restore();
+
+        ctx.save();
+        ctx.strokeStyle = "rgba(240, 245, 240, " + (0.45 * depthDarken) + ")";
+        ctx.lineWidth = 1.2 * koi.scale;
+        ctx.beginPath();
+        ctx.moveTo(segments[3].x, segments[3].y);
+        for (s = 4; s <= 7; s++) {
+          ctx.lineTo(segments[s].x, segments[s].y);
+        }
+        ctx.stroke();
+        ctx.restore();
+
+        var headSeg = segments[1];
+        var eyeDist = headSeg.radius * 0.88;
+        var eyeNormX = -Math.sin(koi.heading);
+        var eyeNormY = Math.cos(koi.heading);
+
+        var leftEyeX = headSeg.x + eyeNormX * eyeDist;
+        var leftEyeY = headSeg.y + eyeNormY * eyeDist;
+        ctx.fillStyle = "rgba(22, 28, 30, " + depthDarken + ")";
+        ctx.beginPath();
+        ctx.arc(leftEyeX, leftEyeY, 1.2 * koi.scale, 0, Math.PI * 2);
+        ctx.fill();
+        if (depth < 0.5) {
+          ctx.fillStyle = "rgba(220, 180, 50, " + (0.8 * depthDarken) + ")";
+          ctx.fillRect(Math.floor(leftEyeX), Math.floor(leftEyeY), 1, 1);
+        }
+
+        var rightEyeX = headSeg.x - eyeNormX * eyeDist;
+        var rightEyeY = headSeg.y - eyeNormY * eyeDist;
+        ctx.fillStyle = "rgba(22, 28, 30, " + depthDarken + ")";
+        ctx.beginPath();
+        ctx.arc(rightEyeX, rightEyeY, 1.2 * koi.scale, 0, Math.PI * 2);
+        ctx.fill();
+        if (depth < 0.5) {
+          ctx.fillStyle = "rgba(220, 180, 50, " + (0.8 * depthDarken) + ")";
+          ctx.fillRect(Math.floor(rightEyeX), Math.floor(rightEyeY), 1, 1);
+        }
+
+        var gillSeg = segments[2];
+        ctx.strokeStyle = "rgba(0, 0, 0, " + (0.18 * depthDarken) + ")";
+        ctx.lineWidth = 0.6;
+        ctx.beginPath();
+        ctx.arc(gillSeg.x, gillSeg.y, gillSeg.radius * 0.85, koi.heading + 0.6, koi.heading + 1.8);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(gillSeg.x, gillSeg.y, gillSeg.radius * 0.85, koi.heading - 1.8, koi.heading - 0.6);
+        ctx.stroke();
+
+        if (depth < 0.35) {
+          var specAlpha = (0.35 - depth) * 1.5;
+          ctx.strokeStyle = "rgba(255, 255, 255, " + specAlpha + ")";
+          ctx.lineWidth = 1.0;
+          ctx.beginPath();
+          ctx.moveTo(segments[0].x, segments[0].y);
+          ctx.lineTo(segments[3].x, segments[3].y);
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      }
+
+      function renderAquaticPlants(ctx, time) {
+        ctx.save();
+        for (var p = 0; p < plants.length; p++) {
+          var plant = plants[p];
+          var sway = Math.sin(time * 0.002 * plant.speed + plant.phase) * plant.curve;
+
+          ctx.strokeStyle = plant.color;
+          ctx.lineWidth = plant.width;
+          ctx.lineCap = "round";
+
+          ctx.beginPath();
+          ctx.moveTo(plant.bx, plant.by);
+          var midX = plant.bx + sway * 0.45;
+          var midY = plant.by - plant.height * 0.55;
+          var tipX = plant.bx + sway;
+          var tipY = plant.by - plant.height;
+          ctx.quadraticCurveTo(midX, midY, tipX, tipY);
+          ctx.stroke();
+
+          ctx.fillStyle = "rgba(90, 180, 120, 0.25)";
+          ctx.fillRect(Math.floor(tipX), Math.floor(tipY), 1, 1);
+        }
+        ctx.restore();
+      }
+
+      function renderLilyPads(ctx, time) {
+        ctx.save();
+        for (var l = 0; l < lilyPads.length; l++) {
+          var pad = lilyPads[l];
+          var bob = Math.sin(time * 0.0018 + l) * 0.6;
+          var lx = pad.x;
+          var ly = pad.y + bob;
+
+          ctx.fillStyle = "rgba(2, 10, 12, 0.45)";
+          ctx.beginPath();
+          ctx.ellipse(lx + 2, ly + 4, pad.rx * 1.05, pad.ry * 1.05, pad.rot, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.save();
+          ctx.translate(lx, ly);
+          ctx.rotate(pad.rot);
+
+          ctx.fillStyle = "#1e4d34";
+          ctx.beginPath();
+          ctx.ellipse(0, 0, pad.rx, pad.ry, 0, pad.notch, Math.PI * 2);
+          ctx.lineTo(0, 0);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.fillStyle = "#2c6846";
+          ctx.beginPath();
+          ctx.ellipse(0, 0, pad.rx * 0.85, pad.ry * 0.85, 0, pad.notch + 0.1, Math.PI * 2 - 0.1);
+          ctx.lineTo(0, 0);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.strokeStyle = "rgba(70, 160, 105, 0.35)";
+          ctx.lineWidth = 0.5;
+          for (var v = 0; v < 5; v++) {
+            var vAng = pad.notch + 0.4 + v * 0.85;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(Math.cos(vAng) * (pad.rx * 0.8), Math.sin(vAng) * (pad.ry * 0.8));
+            ctx.stroke();
+          }
+
+          ctx.strokeStyle = "rgba(140, 220, 170, 0.22)";
+          ctx.lineWidth = 0.8;
+          ctx.stroke();
+
+          if (pad.hasFlower) {
+            ctx.save();
+            ctx.translate(pad.rx * 0.25, -pad.ry * 0.15);
+            var numPetals = 8;
+            for (var p = 0; p < numPetals; p++) {
+              var pAngle = (p / numPetals) * Math.PI * 2;
+              ctx.fillStyle = p % 2 === 0 ? "#f9e8ed" : "#f1b8c8";
+              ctx.beginPath();
+              ctx.ellipse(
+                Math.cos(pAngle) * 3.5,
+                Math.sin(pAngle) * 3.5,
+                3.0,
+                1.5,
+                pAngle,
+                0,
+                Math.PI * 2
+              );
+              ctx.fill();
+            }
+            ctx.fillStyle = "#f6c23e";
+            ctx.beginPath();
+            ctx.arc(0, 0, 1.8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+
+          ctx.restore();
+        }
+        ctx.restore();
+      }
+
+      function renderRipples(ctx) {
+        ctx.save();
+        for (var i = 0; i < MAX_RIPPLES; i++) {
+          var rip = ripples[i];
+          if (rip.active) {
+            var alpha = rip.intensity * 0.6;
+
+            ctx.strokeStyle = "rgba(140, 230, 220, " + alpha + ")";
+            ctx.lineWidth = 1.0;
+            ctx.beginPath();
+            ctx.arc(rip.x, rip.y, rip.radius, rip.arcStart1, rip.arcEnd1);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(rip.x, rip.y, rip.radius, rip.arcStart2, rip.arcEnd2);
+            ctx.stroke();
+
+            if (rip.radius > 6) {
+              ctx.strokeStyle = "rgba(80, 190, 185, " + (alpha * 0.5) + ")";
+              ctx.lineWidth = 0.7;
+              ctx.beginPath();
+              ctx.arc(rip.x, rip.y, rip.radius * 0.62, rip.arcStart1 + 0.4, rip.arcEnd1 - 0.2);
+              ctx.stroke();
+            }
+          }
+        }
+        ctx.restore();
+      }
+
+      function renderParticlesAndBubbles(ctx) {
+        var i;
+        ctx.save();
+
+        for (i = 0; i < MAX_PARTICLES; i++) {
+          var p = particles[i];
+          var pAlpha = (1.0 - p.depth * 0.5) * p.brightness * 0.45;
+          ctx.fillStyle = "rgba(180, 225, 215, " + pAlpha + ")";
+          ctx.fillRect(Math.floor(p.x), Math.floor(p.y), Math.floor(p.size), Math.floor(p.size));
+        }
+
+        for (i = 0; i < MAX_BUBBLES; i++) {
+          var b = bubbles[i];
+          if (b.active) {
+            var bAlpha = (1.0 - b.depth * 0.4) * 0.75;
+            ctx.strokeStyle = "rgba(220, 250, 245, " + bAlpha + ")";
+            ctx.lineWidth = 0.6;
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, b.size, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.fillStyle = "rgba(255, 255, 255, " + bAlpha + ")";
+            ctx.fillRect(Math.floor(b.x - b.size * 0.3), Math.floor(b.y - b.size * 0.3), 1, 1);
+          }
+        }
+
+        for (i = 0; i < MAX_FOOD; i++) {
+          var f = foodPellets[i];
+          if (f.active) {
+            ctx.fillStyle = "#8d5b28";
+            ctx.beginPath();
+            ctx.arc(f.x, f.y, 1.4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "rgba(240, 180, 100, 0.7)";
+            ctx.fillRect(Math.floor(f.x), Math.floor(f.y), 1, 1);
+          }
+        }
+
+        ctx.restore();
+      }
+
+      function renderCloudShadows(targetCtx, time) {
+        if (!cloudCtx || !cloudShadowsEnabled) return;
+
+        cloudCtx.clearRect(0, 0, LOGICAL_W, LOGICAL_H);
+
+        for (var c = 0; c < clouds.length; c++) {
+          var cloud = clouds[c];
+          for (var p = 0; p < cloud.puffs.length; p++) {
+            var puff = cloud.puffs[p];
+            var pulse = Math.sin(time * puff.pulseSpeed + puff.phase) * 0.08;
+            var currentRx = puff.rx * (1 + pulse);
+            var currentRy = puff.ry * (1 + pulse * 0.8);
+            var cx = cloud.x + puff.ox;
+            var cy = cloud.y + puff.oy;
+
+            var maxR = Math.max(currentRx, currentRy);
+            if (cx + maxR < 0 || cx - maxR > LOGICAL_W || cy + maxR < 0 || cy - maxR > LOGICAL_H) {
+              continue;
+            }
+
+            var grad = cloudCtx.createRadialGradient(0, 0, 0, 0, 0, maxR);
+            var baseA = puff.density * cloud.baseOpacity;
+            grad.addColorStop(0, "rgba(2, 12, 22, " + (baseA * 0.95) + ")");
+            grad.addColorStop(0.35, "rgba(3, 13, 24, " + (baseA * 0.72) + ")");
+            grad.addColorStop(0.72, "rgba(4, 15, 27, " + (baseA * 0.28) + ")");
+            grad.addColorStop(1, "rgba(4, 16, 28, 0)");
+
+            cloudCtx.save();
+            cloudCtx.beginPath();
+            cloudCtx.translate(cx, cy);
+            cloudCtx.scale(currentRx / maxR, currentRy / maxR);
+            cloudCtx.fillStyle = grad;
+            cloudCtx.arc(0, 0, maxR, 0, Math.PI * 2);
+            cloudCtx.fill();
+            cloudCtx.restore();
+          }
+        }
+
+        targetCtx.save();
+        targetCtx.drawImage(cloudCanvas, 0, 0);
+        targetCtx.restore();
+      }
+
+      function renderSurfaceLighting(ctx, time) {
+        ctx.save();
+
+        var t = time * 0.0008;
+        ctx.fillStyle = "rgba(160, 220, 230, 0.04)";
+        for (var s = 0; s < 5; s++) {
+          var sy = POND_Y1 + 25 + s * 38 + Math.sin(t + s * 1.5) * 8;
+          ctx.fillRect(POND_X1 + 10, sy, POND_W - 20, 1);
+        }
+
+        var vig = ctx.createRadialGradient(
+          LOGICAL_W * 0.5,
+          LOGICAL_H * 0.5,
+          LOGICAL_W * 0.32,
+          LOGICAL_W * 0.5,
+          LOGICAL_H * 0.5,
+          LOGICAL_W * 0.62
+        );
+        vig.addColorStop(0, "rgba(0, 0, 0, 0)");
+        vig.addColorStop(1, "rgba(0, 6, 8, 0.42)");
+        ctx.fillStyle = vig;
+        ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+
+        ctx.restore();
+      }
+
+      function renderFrame(time) {
+        ctx.drawImage(bgCanvas, 0, 0);
+
+        renderCaustics(time);
+        ctx.save();
+        ctx.globalCompositeOperation = "screen";
+        ctx.drawImage(causticCanvas, 0, 0, causticW, causticH, POND_X1, POND_Y1, POND_W, POND_H);
+        ctx.restore();
+
+        var sortedKois = kois.slice().sort(function (a, b) {
+          return b.depth - a.depth;
+        });
+
+        for (var si = 0; si < sortedKois.length; si++) {
+          renderKoi(ctx, sortedKois[si], true);
+        }
+
+        renderAquaticPlants(ctx, time);
+
+        for (var ki = 0; ki < sortedKois.length; ki++) {
+          renderKoi(ctx, sortedKois[ki], false);
+        }
+
+        renderLilyPads(ctx, time);
+        renderParticlesAndBubbles(ctx);
+        renderRipples(ctx);
+        renderCloudShadows(ctx, time);
+        renderSurfaceLighting(ctx, time);
+
+        dCtx.fillStyle = "#05080a";
+        dCtx.fillRect(0, 0, displayCanvas.width, displayCanvas.height);
+
+        dCtx.imageSmoothingEnabled = false;
+        dCtx.drawImage(
+          offCanvas,
+          0,
+          0,
+          LOGICAL_W,
+          LOGICAL_H,
+          destX,
+          destY,
+          destW,
+          destH
+        );
+      }
+
+      function handleResize() {
+        var w = window.innerWidth;
+        var h = window.innerHeight;
+
+        displayCanvas.width = w;
+        displayCanvas.height = h;
+
+        var scaleX = Math.floor(w / LOGICAL_W);
+        var scaleY = Math.floor(h / LOGICAL_H);
+        var intScale = Math.min(scaleX, scaleY);
+
+        if (intScale >= 1) {
+          displayScale = intScale;
+          destW = LOGICAL_W * displayScale;
+          destH = LOGICAL_H * displayScale;
+        } else {
+          displayScale = Math.min(w / LOGICAL_W, h / LOGICAL_H);
+          destW = Math.floor(LOGICAL_W * displayScale);
+          destH = Math.floor(LOGICAL_H * displayScale);
+        }
+
+        destX = Math.floor((w - destW) / 2);
+        destY = Math.floor((h - destH) / 2);
+      }
+
+      window.addEventListener("resize", handleResize);
+
+      function handlePointerInteraction(screenX, screenY, isClick) {
+        var localX = (screenX - destX) / displayScale;
+        var localY = (screenY - destY) / displayScale;
+
+        if (localX >= POND_X1 && localX <= POND_X2 && localY >= POND_Y1 && localY <= POND_Y2) {
+          spawnRipple(localX, localY, isClick ? 1.0 : 0.45);
+
+          for (var i = 0; i < NUM_KOI; i++) {
+            var koi = kois[i];
+            var dx = koi.x - localX;
+            var dy = koi.y - localY;
+            var dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < 55) {
+              var fleeAngle = Math.atan2(dy, dx);
+              koi.targetHeading = fleeAngle + (Math.random() - 0.5) * 0.4;
+              koi.targetSpeed = 0.75 + Math.random() * 0.25;
+              koi.targetDepth = Math.min(0.9, koi.depth + 0.25);
+              koi.turnSpeed = 0.08;
+              koi.disturbedTimer = 45;
+              koi.turnTimer = 45;
+            }
+          }
+        }
+      }
+
+      displayCanvas.addEventListener("mousedown", function (e) {
+        isMouseDown = true;
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+        handlePointerInteraction(e.clientX, e.clientY, true);
+      });
+
+      window.addEventListener("mouseup", function () {
+        isMouseDown = false;
+      });
+
+      displayCanvas.addEventListener("mousemove", function (e) {
+        if (isMouseDown) {
+          var dx = e.clientX - lastMouseX;
+          var dy = e.clientY - lastMouseY;
+          if (dx * dx + dy * dy > 64) {
+            handlePointerInteraction(e.clientX, e.clientY, false);
+            lastMouseX = e.clientX;
+            lastMouseY = e.clientY;
+          }
+        }
+      });
+
+      displayCanvas.addEventListener("touchstart", function (e) {
+        if (e.touches.length > 0) {
+          var t = e.touches[0];
+          handlePointerInteraction(t.clientX, t.clientY, true);
+        }
+        e.preventDefault();
+      }, { passive: false });
+
+      displayCanvas.addEventListener("touchmove", function (e) {
+        if (e.touches.length > 0) {
+          var t = e.touches[0];
+          handlePointerInteraction(t.clientX, t.clientY, false);
+        }
+        e.preventDefault();
+      }, { passive: false });
+
+      document.getElementById("feed-btn").addEventListener("click", function () {
+        var numPellets = 4 + Math.floor(Math.random() * 3);
+        var centerX = POND_X1 + POND_W * 0.5 + (Math.random() - 0.5) * 60;
+        var centerY = POND_Y1 + POND_H * 0.5 + (Math.random() - 0.5) * 40;
+        for (var p = 0; p < numPellets; p++) {
+          dropFood(centerX + (Math.random() - 0.5) * 20, centerY + (Math.random() - 0.5) * 20);
+        }
+      });
+
+      var cloudBtn = document.getElementById("cloud-btn");
+      cloudBtn.addEventListener("click", function () {
+        cloudShadowsEnabled = !cloudShadowsEnabled;
+        cloudBtn.innerText = cloudShadowsEnabled ? "Clouds: ON" : "Clouds: OFF";
+        cloudBtn.style.opacity = cloudShadowsEnabled ? "1.0" : "0.5";
+      });
+
+      var pauseBtn = document.getElementById("pause-btn");
+      pauseBtn.addEventListener("click", function () {
+        isPaused = !isPaused;
+        pauseBtn.innerText = isPaused ? "Resume" : "Pause";
+      });
+
+      document.getElementById("fullscreen-btn").addEventListener("click", function () {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen().catch(function () {});
+        } else {
+          document.exitFullscreen().catch(function () {});
+        }
+      });
+
+      var lastTime = performance.now();
+      var accumulator = 0;
+      var FIXED_STEP = 1000 / 60;
+
+      function loop(currentTime) {
+        requestAnimationFrame(loop);
+
+        var frameTime = currentTime - lastTime;
+        lastTime = currentTime;
+
+        if (frameTime > 100) frameTime = 100;
+
+        if (!isPaused) {
+          accumulator += frameTime;
+          while (accumulator >= FIXED_STEP) {
+            updateSimulation(FIXED_STEP / 1000);
+            accumulator -= FIXED_STEP;
+          }
+        }
+
+        renderFrame(currentTime);
+      }
+
+      initScenery();
+      preRenderBackground();
+      initKois();
+      handleResize();
+      requestAnimationFrame(loop);
+
+    })();
+  </script>
+</body>
+</html>
