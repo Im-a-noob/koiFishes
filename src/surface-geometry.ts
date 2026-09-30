@@ -60,6 +60,7 @@ export class SurfaceGeometryBatch {
     c: SurfacePoint,
     color: THREE.Color = DEFAULT_COLOR,
   ): void {
+    if (this.cursor + 9 > this.positions.length) return;
     this.point(a, color);
     this.point(b, color);
     this.point(c, color);
@@ -73,6 +74,7 @@ export class SurfaceGeometryBatch {
     colorB: THREE.Color,
     colorC: THREE.Color,
   ): void {
+    if (this.cursor + 9 > this.positions.length) return;
     this.point(a, colorA);
     this.point(b, colorB);
     this.point(c, colorC);
@@ -83,6 +85,7 @@ export class SurfaceGeometryBatch {
     b: SurfacePoint,
     color: THREE.Color = DEFAULT_COLOR,
   ): void {
+    if (this.cursor + 6 > this.positions.length) return;
     this.point(a, color);
     this.point(b, color);
   }

@@ -23,11 +23,17 @@ import {
   XorShift32,
 } from "./math";
 import { RippleSystem } from "./ripple-system";
+import { VortexSystem } from "./vortices";
+import { FoodPelletsPass } from "./food-pellets";
+import { SiltParticlePass } from "./silt-particles";
 
 export class School {
   public readonly fish: Koi[] = Array.from({ length: MAX_FISH }, () => new Koi());
   public readonly ripples = new RippleSystem();
   public readonly tinyFish = new TinyFishSchools();
+  public readonly vortices = new VortexSystem();
+  public readonly foodPellets = new FoodPelletsPass();
+  public readonly siltParticles = new SiltParticlePass();
 
   public count: number = FISH.initialCount;
   public targetActive = false;
@@ -99,6 +105,9 @@ export class School {
     this.fish.forEach((fish, index) => fish.reset(index, this.random));
     this.tinyFish.reset();
     this.ripples.reset();
+    this.vortices.reset();
+    this.foodPellets.pellets.length = 0;
+    this.siltParticles.reset();
     this.targetActive = false;
   }
 
@@ -110,6 +119,7 @@ export class School {
     this.target = { ...point };
     this.targetActive = true;
     this.targetAge = 0;
+    this.foodPellets.dropPelletCluster(point.x, point.y, 3, this.ripples);
     for (let index = 0; index < this.count; index += 1) {
       const fish = this.fish[index];
       const response = FISH.callResponse;
@@ -141,6 +151,20 @@ export class School {
     this.targetActive = false;
   }
 
+  public scareNear(x: number, y: number, radius = 46): void {
+    for (let index = 0; index < this.count; index += 1) {
+      const fish = this.fish[index];
+      const dx = fish.position.x - x;
+      const dy = fish.position.y - y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < radius && dist > 0.01) {
+        fish.heading = Math.atan2(dy, dx);
+        fish.speed = fish.maximumSpeed * 1.08;
+        this.enterState(fish, SwimState.Burst);
+      }
+    }
+  }
+
   public update(dt: number, time: number): void {
     this.targetAge += dt;
     if (
@@ -149,6 +173,8 @@ export class School {
     ) {
       this.targetActive = false;
     }
+
+    this.updateDraftingAndCollisions(dt);
 
     const desired: Vec2[] = [];
     const desiredSpeed: number[] = [];
@@ -176,6 +202,9 @@ export class School {
       this.integrate(fish, desired[index], desiredSpeed[index], dt);
     }
     this.tinyFish.update(dt, time);
+    this.vortices.update(dt);
+    this.foodPellets.update(time, this.vortices, this.ripples);
+    this.siltParticles.update(dt, time, this.vortices);
 
     this.ripples.update(dt);
   }
@@ -215,6 +244,31 @@ export class School {
 
   private updateFeeding(fish: Koi, dt: number): void {
     fish.gulpAnimation = Math.max(0, fish.gulpAnimation - dt);
+
+    const forwardX = Math.cos(fish.heading);
+    const forwardY = Math.sin(fish.heading);
+    const mouthDistance = fish.bodyWidth * FISH.feeding.mouthForwardOffset;
+    const mouthPos = {
+      x: fish.position.x + forwardX * mouthDistance,
+      y: fish.position.y + forwardY * mouthDistance,
+    };
+
+    // 1. Interactive Buccal Suction towards floating food pellets
+    const nearestPellet = this.foodPellets.getNearestPellet(mouthPos.x, mouthPos.y, 85);
+    if (nearestPellet && fish.depth < 0.28) {
+      const consumed = this.foodPellets.applySuction(nearestPellet, mouthPos.x, mouthPos.y, dt);
+      if (consumed) {
+        this.ripples.trigger("mouth", mouthPos);
+        fish.gulpAnimation = FISH.feeding.animationDurationSeconds;
+        fish.gulpCountdown = this.behaviorRange(
+          fish,
+          FISH.feeding.intervalSeconds[0],
+          FISH.feeding.intervalSeconds[1],
+        );
+        return;
+      }
+    }
+
     fish.gulpCountdown -= dt;
     if (fish.gulpCountdown > 0) return;
 
@@ -238,13 +292,7 @@ export class School {
       return;
     }
 
-    const forwardX = Math.cos(fish.heading);
-    const forwardY = Math.sin(fish.heading);
-    const mouthDistance = fish.bodyWidth * FISH.feeding.mouthForwardOffset;
-    this.ripples.trigger("mouth", {
-      x: fish.position.x + forwardX * mouthDistance,
-      y: fish.position.y + forwardY * mouthDistance,
-    });
+    this.ripples.trigger("mouth", mouthPos);
     fish.gulpAnimation = FISH.feeding.animationDurationSeconds;
     fish.gulpCountdown = this.behaviorRange(
       fish,
@@ -395,6 +443,12 @@ export class School {
       }
     }
 
+    const nearestPellet = this.foodPellets.getNearestPellet(fish.position.x, fish.position.y, 120);
+    if (nearestPellet) {
+      const toPellet = sub(vec(nearestPellet.x, nearestPellet.y), fish.position);
+      steering = add(steering, mul(normalize(toPellet), 3.4));
+    }
+
     return normalize(steering, forward);
   }
 
@@ -414,11 +468,21 @@ export class School {
       );
     }
 
+    const nearestPellet = this.foodPellets.getNearestPellet(fish.position.x, fish.position.y, 120);
+    if (nearestPellet) {
+      return fish.cruiseSpeed * 1.35;
+    }
+
     let intention = fish.cruiseSpeed;
     if (this.targetActive && fish.callDelay <= 0) {
       const distance = length(sub(this.target, fish.position));
       const urgency = clamp(distance / 105, 0.2, 1);
       intention = fish.cruiseSpeed + (fish.maximumSpeed - fish.cruiseSpeed) * urgency;
+    }
+
+    // 5. Hydrodynamic Slipstream Drafting Speed Boost
+    if (fish.draftingFactor > 0.05) {
+      intention *= (1.0 + fish.draftingFactor * 0.24);
     }
 
     switch (fish.state) {
@@ -432,6 +496,119 @@ export class School {
         return fish.maximumSpeed * 1.08;
       case SwimState.Pivot:
         return fish.cruiseSpeed * 0.16;
+    }
+  }
+
+  /**
+   * 5. Hydrodynamic Schooling: Multi-Segment Hull Collision & Slipstream Drafting
+   */
+  private updateDraftingAndCollisions(dt: number): void {
+    // 1. Reset collision impulses and drafting metrics
+    for (let i = 0; i < this.count; i += 1) {
+      const fish = this.fish[i];
+      fish.collisionRepulsion = vec(0, 0);
+      fish.draftingFactor = 0;
+    }
+
+    // 2. Multi-Segment Capsule Hull Collision Response between nearby koi
+    for (let i = 0; i < this.count; i += 1) {
+      const fishA = this.fish[i];
+      for (let j = i + 1; j < this.count; j += 1) {
+        const fishB = this.fish[j];
+
+        // 3D vertical depth separation check (koi can swim freely over/under each other)
+        const depthDelta = Math.abs(fishA.depth - fishB.depth);
+        if (depthDelta > 0.26) continue;
+        const depthCushion = 1.0 - depthDelta / 0.26;
+
+        // Sample key hull nodes along spine: head (0), mid-torso, and tail peduncle
+        const sampleNodes = [0, Math.floor(SPINE_NODES * 0.38), SPINE_NODES - 2];
+        for (const nodeA of sampleNodes) {
+          const posA = fishA.spine[nodeA];
+          const widthA = fishA.bodyWidth * (nodeA === 0 ? 0.9 : nodeA === sampleNodes[1] ? 1.0 : 0.65);
+
+          for (const nodeB of sampleNodes) {
+            const posB = fishB.spine[nodeB];
+            const widthB = fishB.bodyWidth * (nodeB === 0 ? 0.9 : nodeB === sampleNodes[1] ? 1.0 : 0.65);
+
+            const dx = posA.x - posB.x;
+            const dy = posA.y - posB.y;
+            const distSq = dx * dx + dy * dy;
+            const minDist = (widthA + widthB) * 0.82;
+
+            if (distSq < minDist * minDist && distSq > 0.001) {
+              const dist = Math.sqrt(distSq);
+              const nx = dx / dist;
+              const ny = dy / dist;
+              const overlap = (minDist - dist) * depthCushion;
+
+              // Elastic boundary repulsion with fluid lubrication cushioning
+              const impulse = overlap * 18.0;
+              fishA.collisionRepulsion.x += nx * impulse;
+              fishA.collisionRepulsion.y += ny * impulse;
+              fishB.collisionRepulsion.x -= nx * impulse;
+              fishB.collisionRepulsion.y -= ny * impulse;
+
+              // Gentle glancing torque: deflect headings to glide past gracefully
+              const relHeading = wrapAngle(fishA.heading - fishB.heading);
+              if (Math.abs(relHeading) < 1.2) {
+                const sideSign = (nx * -Math.sin(fishA.heading) + ny * Math.cos(fishA.heading)) > 0 ? 1 : -1;
+                fishA.angularVelocity += sideSign * 0.9 * overlap * dt;
+                fishB.angularVelocity -= sideSign * 0.9 * overlap * dt;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 3. Hydrodynamic Slipstream Drafting (Wake capture & energy conservation)
+    for (let i = 0; i < this.count; i += 1) {
+      const trailing = this.fish[i];
+      let maxDraft = 0;
+
+      for (let j = 0; j < this.count; j += 1) {
+        if (i === j) continue;
+        const leader = this.fish[j];
+        if (leader.speed < 8.0) continue; // Leader must be moving forward
+
+        // Check vertical depth alignment
+        const depthDelta = Math.abs(trailing.depth - leader.depth);
+        if (depthDelta > 0.22) continue;
+        const depthFactor = 1.0 - depthDelta / 0.22;
+
+        const forwardL = fromAngle(leader.heading);
+        const perpL = perpendicular(forwardL);
+
+        // Vector from leader to trailing fish
+        const toTrailX = trailing.position.x - leader.position.x;
+        const toTrailY = trailing.position.y - leader.position.y;
+
+        // Downstream projection (behind leader along backward heading)
+        const downstream = -(toTrailX * forwardL.x + toTrailY * forwardL.y);
+        if (downstream < 14.0 || downstream > 85.0) continue;
+
+        // Cross-stream lateral offset
+        const crossStream = Math.abs(toTrailX * perpL.x + toTrailY * perpL.y);
+        const wakeHalfWidth = leader.bodyWidth * 1.6 + downstream * 0.26;
+        if (crossStream > wakeHalfWidth) continue;
+
+        // Heading alignment check (trailing fish must be heading roughly in same direction)
+        const headingDiff = Math.abs(wrapAngle(trailing.heading - leader.heading));
+        if (headingDiff > 1.1) continue;
+
+        // Drafting efficiency (peaks right in sweet spot behind leader)
+        const longitudinalQuality = Math.sin((downstream - 14.0) / (85.0 - 14.0) * Math.PI);
+        const lateralQuality = 1.0 - crossStream / wakeHalfWidth;
+        const alignmentQuality = Math.cos(headingDiff);
+
+        const draftScore = longitudinalQuality * lateralQuality * alignmentQuality * depthFactor;
+        if (draftScore > maxDraft) {
+          maxDraft = draftScore;
+        }
+      }
+
+      trailing.draftingFactor = maxDraft;
     }
   }
 
@@ -471,13 +648,41 @@ export class School {
         break;
     }
 
+    // Energy conservation when drafting in a leading fish's slipstream
+    if (fish.draftingFactor > 0.05) {
+      desiredTailEffort *= (1.0 - fish.draftingFactor * 0.35);
+    }
+
     fish.speed += (desiredSpeed - fish.speed) * (1 - Math.exp(-speedResponse * dt));
     fish.tailEffort += (desiredTailEffort - fish.tailEffort) * (1 - Math.exp(-4.5 * dt));
     fish.velocity = mul(fromAngle(fish.heading), fish.speed);
     fish.position = add(fish.position, mul(fish.velocity, dt));
 
+    // Apply accumulated multi-segment hull collision repulsion
+    fish.position = add(fish.position, mul(fish.collisionRepulsion, dt));
+
     const beatRate = 0.45 + (fish.speed / fish.maximumSpeed) * 4.6 + fish.tailEffort * 0.9;
     fish.swimPhase += beatRate * dt;
+
+    // Detect tail stroke reversal to shed fluid vortices & stir benthic sediment
+    const tailSign = Math.sign(Math.sin(fish.swimPhase));
+    if (tailSign !== 0 && tailSign !== fish.previousTailSign && fish.speed > 5.0) {
+      fish.previousTailSign = tailSign;
+      const tailTip = fish.spine[SPINE_NODES - 1];
+      this.vortices.shedVortex(tailTip.x, tailTip.y, fish.heading, fish.speed, tailSign);
+
+      // 6. Benthic Sediment Plumes (delicate sunlit mica shimmer when swimming near riverbed stones)
+      if (fish.depth > 0.78 && fish.speed > 8.0) {
+        this.siltParticles.spawnSiltPuff(
+          tailTip.x,
+          tailTip.y,
+          fish.heading,
+          fish.speed,
+          tailSign,
+          1,
+        );
+      }
+    }
 
     fish.spine[0] = { ...fish.position };
     const spacing = fish.bodyLength / (SPINE_NODES - 1);

@@ -54,6 +54,10 @@ export interface WeatherPreset {
   lightColor: ColorTriplet;
   lightStrength: number;
   lightDirection: Direction;
+  sunAltitude: number;
+  volumetricRays: number;
+  volumetricMist: number;
+  canopyShadow: number;
   rainStrength: number;
   config: WeatherConfigValues;
 }
@@ -75,6 +79,10 @@ export const WEATHER_PRESETS: readonly WeatherPreset[] = [
     lightColor: [1, 0.94, 0.72],
     lightStrength: 0,
     lightDirection: [-0.58, 0.82],
+    sunAltitude: 0.92,
+    volumetricRays: 0.40,
+    volumetricMist: 0.08,
+    canopyShadow: 0.55,
     rainStrength: 0,
     config: {
       koi: { shadow: { color: 0x0b211e } },
@@ -116,6 +124,10 @@ export const WEATHER_PRESETS: readonly WeatherPreset[] = [
     lightColor: [0.54, 0.75, 0.86],
     lightStrength: 0.045,
     lightDirection: [0.36, 0.93],
+    sunAltitude: 0.30,
+    volumetricRays: 0.20,
+    volumetricMist: 0.70,
+    canopyShadow: 0.18,
     rainStrength: 10,
     config: {
       koi: { shadow: { color: 0x0b211e } },
@@ -158,6 +170,10 @@ export const WEATHER_PRESETS: readonly WeatherPreset[] = [
     lightColor: [1, 0.94, 0.72],
     lightStrength: 0,
     lightDirection: [-0.58, 0.82],
+    sunAltitude: 0.95,
+    volumetricRays: 0.45,
+    volumetricMist: 0.05,
+    canopyShadow: 0.60,
     rainStrength: 0,
     config: {
       koi: { shadow: { color: 0x0b211e } },
@@ -199,6 +215,10 @@ export const WEATHER_PRESETS: readonly WeatherPreset[] = [
     lightColor: [0.72, 0.84, 0.9],
     lightStrength: 0.035,
     lightDirection: [0.42, 0.9],
+    sunAltitude: 0.45,
+    volumetricRays: 0.15,
+    volumetricMist: 0.35,
+    canopyShadow: 0.15,
     rainStrength: 0,
     config: {
       koi: { shadow: { color: 0x0b211e } },
@@ -240,6 +260,10 @@ export const WEATHER_PRESETS: readonly WeatherPreset[] = [
     lightColor: [0.78, 0.93, 0.88],
     lightStrength: 0.025,
     lightDirection: [0.32, 0.95],
+    sunAltitude: 0.35,
+    volumetricRays: 0.60,
+    volumetricMist: 0.85,
+    canopyShadow: 0.25,
     rainStrength: 0,
     config: {
       koi: { shadow: { color: 0x0b211e } },
@@ -281,6 +305,10 @@ export const WEATHER_PRESETS: readonly WeatherPreset[] = [
     lightColor: [1, 0.42, 0.15],
     lightStrength: 0.2,
     lightDirection: [-0.7, 0.72],
+    sunAltitude: 0.15,
+    volumetricRays: 0.75,
+    volumetricMist: 0.50,
+    canopyShadow: 0.45,
     rainStrength: 0,
     config: {
       koi: { shadow: { color: 0x0b211e } },
@@ -322,6 +350,10 @@ export const WEATHER_PRESETS: readonly WeatherPreset[] = [
     lightColor: [0.46, 0.68, 1],
     lightStrength: 0.14,
     lightDirection: [0.68, 0.74],
+    sunAltitude: 0.40,
+    volumetricRays: 0.50,
+    volumetricMist: 0.60,
+    canopyShadow: 0.32,
     rainStrength: 0,
     config: {
       koi: { shadow: { color: 0x0b211e } },

@@ -194,6 +194,7 @@ class LotusGeometryBatch {
 export class LotusLeavesPass {
   public readonly shadowGroup = new THREE.Group();
   public readonly group = new THREE.Group();
+  public readonly leafOccluders: { x: number; y: number; radius: number }[] = [];
 
   private readonly shadowGeometry = new THREE.BufferGeometry();
   private readonly leafGeometry = new THREE.BufferGeometry();
@@ -332,16 +333,27 @@ export class LotusLeavesPass {
     }
   }
 
-  public update(time: number, ripples?: RippleSystem): void {
+  public update(
+    time: number,
+    ripples?: RippleSystem,
+    lightDirection?: THREE.Vector2,
+    sunAltitude = 0.8,
+  ): void {
     this.updatePhysics(time, ripples);
 
     this.shadowBatch.reset();
     this.leafBatch.reset();
     this.veinBatch.reset();
     this.flowerBatch.reset();
+    this.leafOccluders.length = 0;
 
     const visibleLeaves = LOTUS_LEAVES.slice(0, LOTUS.visibleLeafCount);
     const visibleFlowers = LOTUS_FLOWERS.slice(0, LOTUS.visibleFlowerCount);
+
+    const lightDir = lightDirection ?? new THREE.Vector2(-0.5, 0.8);
+    const shadowDist = (1.0 - Math.min(1.0, Math.max(0.1, sunAltitude)) * 0.65) * 14.0;
+    const flowerShadowDist = (1.0 - Math.min(1.0, Math.max(0.1, sunAltitude)) * 0.65) * 17.0;
+
     for (const [leafIndex, leaf] of visibleLeaves.entries()) {
       const leafPhys = this.leafPhysics[leafIndex];
       const placement = viewportPoint(leaf.x, leaf.y);
@@ -369,11 +381,13 @@ export class LotusLeavesPass {
         ((leaf.palette % PALETTES.length) + PALETTES.length) % PALETTES.length
       ];
 
+      this.leafOccluders.push({ x: center.x, y: center.y, radius });
+
       this.drawLeaf(
         this.shadowBatch,
         {
-          x: center.x + LOTUS.shadow.offset.x + (leafPhys ? leafPhys.bob * 1.5 : 0),
-          y: center.y + LOTUS.shadow.offset.y + (leafPhys ? leafPhys.bob * 3.0 : 0),
+          x: center.x - lightDir.x * shadowDist + (leafPhys ? leafPhys.bob * 1.5 : 0),
+          y: center.y - lightDir.y * shadowDist + (leafPhys ? leafPhys.bob * 3.0 : 0),
         },
         radius * 1.02,
         angle,
@@ -402,12 +416,12 @@ export class LotusLeavesPass {
         this.shadowBatch.circle(
           {
             x:
-              flowerCenter.x +
-              LOTUS.shadow.offset.x +
+              flowerCenter.x -
+              lightDir.x * flowerShadowDist +
               (fPhys ? fPhys.tiltX * 2.5 + fPhys.bob * 1.2 : 0),
             y:
-              flowerCenter.y +
-              LOTUS.shadow.offset.y +
+              flowerCenter.y -
+              lightDir.y * flowerShadowDist +
               (fPhys ? fPhys.tiltY * 2.5 + fPhys.bob * 2.8 : 0),
           },
           flowerRadius * 0.65,

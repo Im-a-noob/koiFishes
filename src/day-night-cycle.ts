@@ -16,6 +16,10 @@ export interface DayNightKeyframe {
   lightColor: ColorTriplet;
   lightStrength: number;
   lightDirection: readonly [number, number];
+  sunAltitude: number;
+  volumetricRays: number;
+  volumetricMist: number;
+  canopyShadow: number;
   pondBedDeep: ColorTriplet;
   pondBedShallow: ColorTriplet;
   verticalTone: number;
@@ -41,6 +45,10 @@ export const DAY_NIGHT_KEYFRAMES: readonly DayNightKeyframe[] = [
     lightColor: [1.0, 0.76, 0.62],
     lightStrength: 0.14,
     lightDirection: [0.72, 0.68],
+    sunAltitude: 0.18,
+    volumetricRays: 0.55,
+    volumetricMist: 0.65,
+    canopyShadow: 0.35,
     pondBedDeep: [0.36, 0.62, 0.55],
     pondBedShallow: [0.12, 0.32, 0.22],
     verticalTone: 0.82,
@@ -64,6 +72,10 @@ export const DAY_NIGHT_KEYFRAMES: readonly DayNightKeyframe[] = [
     lightColor: [1.0, 0.92, 0.76],
     lightStrength: 0.18,
     lightDirection: [0.35, 0.88],
+    sunAltitude: 0.58,
+    volumetricRays: 0.42,
+    volumetricMist: 0.28,
+    canopyShadow: 0.50,
     pondBedDeep: [0.44, 0.68, 0.60],
     pondBedShallow: [0.14, 0.36, 0.24],
     verticalTone: 0.80,
@@ -87,6 +99,10 @@ export const DAY_NIGHT_KEYFRAMES: readonly DayNightKeyframe[] = [
     lightColor: [1.0, 0.96, 0.82],
     lightStrength: 0.22,
     lightDirection: [-0.18, 0.94],
+    sunAltitude: 0.95,
+    volumetricRays: 0.35,
+    volumetricMist: 0.08,
+    canopyShadow: 0.58,
     pondBedDeep: [0.486, 0.718, 0.631],
     pondBedShallow: [0.145, 0.395, 0.255],
     verticalTone: 0.80,
@@ -110,6 +126,10 @@ export const DAY_NIGHT_KEYFRAMES: readonly DayNightKeyframe[] = [
     lightColor: [1.0, 0.74, 0.42],
     lightStrength: 0.24,
     lightDirection: [-0.55, 0.78],
+    sunAltitude: 0.62,
+    volumetricRays: 0.45,
+    volumetricMist: 0.15,
+    canopyShadow: 0.52,
     pondBedDeep: [0.46, 0.65, 0.55],
     pondBedShallow: [0.16, 0.36, 0.23],
     verticalTone: 0.82,
@@ -133,6 +153,10 @@ export const DAY_NIGHT_KEYFRAMES: readonly DayNightKeyframe[] = [
     lightColor: [1.0, 0.42, 0.14],
     lightStrength: 0.28,
     lightDirection: [-0.78, 0.62],
+    sunAltitude: 0.15,
+    volumetricRays: 0.70,
+    volumetricMist: 0.48,
+    canopyShadow: 0.42,
     pondBedDeep: [0.44, 0.56, 0.46],
     pondBedShallow: [0.18, 0.32, 0.19],
     verticalTone: 0.85,
@@ -156,6 +180,10 @@ export const DAY_NIGHT_KEYFRAMES: readonly DayNightKeyframe[] = [
     lightColor: [0.62, 0.58, 0.94],
     lightStrength: 0.10,
     lightDirection: [-0.82, 0.54],
+    sunAltitude: 0.10,
+    volumetricRays: 0.25,
+    volumetricMist: 0.60,
+    canopyShadow: 0.22,
     pondBedDeep: [0.24, 0.38, 0.46],
     pondBedShallow: [0.08, 0.20, 0.21],
     verticalTone: 0.88,
@@ -179,6 +207,10 @@ export const DAY_NIGHT_KEYFRAMES: readonly DayNightKeyframe[] = [
     lightColor: [0.48, 0.72, 1.0],
     lightStrength: 0.16,
     lightDirection: [0.68, 0.74],
+    sunAltitude: 0.42,
+    volumetricRays: 0.48,
+    volumetricMist: 0.55,
+    canopyShadow: 0.30,
     pondBedDeep: [0.10, 0.18, 0.28],
     pondBedShallow: [0.04, 0.10, 0.15],
     verticalTone: 0.92,
@@ -203,6 +235,10 @@ export interface EvaluatedDayNightState {
   lightColor: THREE.Color;
   lightStrength: number;
   lightDirection: THREE.Vector2;
+  sunAltitude: number;
+  volumetricRays: number;
+  volumetricMist: number;
+  canopyShadow: number;
   pondBedDeep: THREE.Color;
   pondBedShallow: THREE.Color;
   verticalTone: number;
@@ -306,6 +342,10 @@ export function evaluateDayNightCycle(timeInSeconds: number): EvaluatedDayNightS
     lightColor,
     lightStrength: lerpNum(k1.lightStrength, k2.lightStrength, t),
     lightDirection,
+    sunAltitude: lerpNum(k1.sunAltitude, k2.sunAltitude, t),
+    volumetricRays: lerpNum(k1.volumetricRays, k2.volumetricRays, t),
+    volumetricMist: lerpNum(k1.volumetricMist, k2.volumetricMist, t),
+    canopyShadow: lerpNum(k1.canopyShadow, k2.canopyShadow, t),
     pondBedDeep,
     pondBedShallow,
     verticalTone: lerpNum(k1.verticalTone, k2.verticalTone, t),

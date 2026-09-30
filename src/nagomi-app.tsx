@@ -3,6 +3,7 @@ import {
   CloudFog,
   CloudRain,
   EyeOff,
+  Leaf,
   Maximize2,
   Minus,
   Minimize2,
@@ -62,7 +63,7 @@ import {
 } from "./config";
 import { FishRenderer } from "./fish-renderer";
 import { useIsMobile } from "./hooks/use-mobile";
-import { clamp, vec } from "./math";
+import { clamp, vec, type Vec2 } from "./math";
 import { connectSettingsEffects } from "./settings/effects";
 import { connectPersistence, loadInto } from "./settings/persistence";
 import { useSettingsMeta } from "./settings/react";
@@ -182,6 +183,33 @@ export function App() {
   const previewFamilyRef = useRef<number | null>(null);
   const [confirmResetAll, setConfirmResetAll] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [dayNightCycle, setDayNightCycle] = useState(true);
+  const [dayNightPhase, setDayNightPhase] = useState(0.2);
+  const [dayNightInfo, setDayNightInfo] = useState<{ label: string; icon: string; progress: number }>({
+    label: "Midday",
+    icon: "☀️",
+    progress: 0.28,
+  });
+  const [volumetricRays, setVolumetricRays] = useState(true);
+  const [canopyShadow, setCanopyShadow] = useState(true);
+  const [volumetricMist, setVolumetricMist] = useState(true);
+
+  // Track the Day/Night progress in real time for UI readouts
+  useEffect(() => {
+    if (!dayNightCycle) return;
+    const interval = setInterval(() => {
+      const runtime = runtimeRef.current;
+      if (!runtime) return;
+      const state = runtime.renderer.getDayNightState(performance.now() * 0.001);
+      setDayNightInfo({
+        label: state.label,
+        icon: state.icon,
+        progress: state.progress,
+      });
+      setDayNightPhase(state.progress);
+    }, 500);
+    return () => clearInterval(interval);
+  }, [dayNightCycle]);
 
   const scatter = useCallback(() => {
     const runtime = runtimeRef.current;
@@ -192,6 +220,10 @@ export function App() {
 
   const summonDragonfly = useCallback(() => {
     runtimeRef.current?.renderer.triggerDragonfly();
+  }, []);
+
+  const dropFallingPetal = useCallback(() => {
+    runtimeRef.current?.renderer.spawnFallingPetal();
   }, []);
 
   const setFamilyPreview = useCallback((index: number | null) => {
@@ -429,10 +461,36 @@ export function App() {
     setFamilyPreview(null);
     settings.setWeather(id);
     setWeatherMenuOpen(false);
+    // When user chooses a specific static weather preset, pause Day/Night cycle
+    setDayNightCycle(false);
+    runtimeRef.current?.renderer.setDayNightCycleEnabled(false);
     if (id === "rain" && !soundEnabledRef.current) {
       setAmbientSoundEnabled(true);
     }
   }, [setFamilyPreview, setAmbientSoundEnabled]);
+
+  const handleDayNightCycleChange = useCallback((enabled: boolean) => {
+    setDayNightCycle(enabled);
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    runtime.renderer.setDayNightCycleEnabled(enabled);
+    if (!enabled) {
+      runtime.renderer.setWeatherPreset(weatherPreset);
+    }
+  }, [weatherPreset]);
+
+  const handleDayNightPhaseChange = useCallback((phase: number) => {
+    setDayNightPhase(phase);
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    runtime.renderer.setDayNightPhase(phase, performance.now() * 0.001);
+    const state = runtime.renderer.getDayNightState(performance.now() * 0.001);
+    setDayNightInfo({
+      label: state.label,
+      icon: state.icon,
+      progress: state.progress,
+    });
+  }, []);
 
   const handleRainChange = useCallback((enabled: boolean) => {
     settings.setRain(enabled);
@@ -445,9 +503,32 @@ export function App() {
     setAmbientSoundEnabled(enabled);
   }, [setAmbientSoundEnabled]);
 
+  const handleVolumetricRaysChange = useCallback((enabled: boolean) => {
+    setVolumetricRays(enabled);
+    runtimeRef.current?.renderer.setVolumetricRaysEnabled(enabled);
+  }, []);
+
+  const handleCanopyShadowChange = useCallback((enabled: boolean) => {
+    setCanopyShadow(enabled);
+    runtimeRef.current?.renderer.setCanopyShadowEnabled(enabled);
+  }, []);
+
+  const handleVolumetricMistChange = useCallback((enabled: boolean) => {
+    setVolumetricMist(enabled);
+    runtimeRef.current?.renderer.setVolumetricMistEnabled(enabled);
+  }, []);
+
   const resetAtmosphere = useCallback(() => {
     changeWeather(DEFAULT_WEATHER_PRESET_ID);
     setAmbientSoundEnabled(false);
+    setDayNightCycle(true);
+    setVolumetricRays(true);
+    setCanopyShadow(true);
+    setVolumetricMist(true);
+    runtimeRef.current?.renderer.setDayNightCycleEnabled(true);
+    runtimeRef.current?.renderer.setVolumetricRaysEnabled(true);
+    runtimeRef.current?.renderer.setCanopyShadowEnabled(true);
+    runtimeRef.current?.renderer.setVolumetricMistEnabled(true);
   }, [changeWeather, setAmbientSoundEnabled]);
 
   useEffect(() => {
@@ -573,6 +654,10 @@ export function App() {
           event.preventDefault();
           runtime.renderer.triggerDragonfly();
           break;
+        case "KeyP":
+          event.preventDefault();
+          runtime.renderer.spawnFallingPetal();
+          break;
         default:
           return;
       }
@@ -593,25 +678,111 @@ export function App() {
     };
   }, [changeKoiCount, toggleAmbientMode]);
 
-  const callFish = (event: ReactPointerEvent<HTMLCanvasElement>): void => {
-    const runtime = runtimeRef.current;
-    if (!runtime) return;
+  const pointerStateRef = useRef<{
+    isDown: boolean;
+    startX: number;
+    startY: number;
+    lastX: number;
+    lastY: number;
+    lastTime: number;
+    totalDistance: number;
+  }>({
+    isDown: false,
+    startX: 0,
+    startY: 0,
+    lastX: 0,
+    lastY: 0,
+    lastTime: 0,
+    totalDistance: 0,
+  });
+
+  const getPondCoords = (event: ReactPointerEvent<HTMLCanvasElement>): Vec2 => {
     const bounds = event.currentTarget.getBoundingClientRect();
-    runtime.school.callTo(
-      vec(
-        clamp(
-          ((event.clientX - bounds.left) / bounds.width) * CANVAS_WIDTH,
-          0,
-          CANVAS_WIDTH,
-        ),
-        clamp(
-          ((event.clientY - bounds.top) / bounds.height) * CANVAS_HEIGHT,
-          0,
-          CANVAS_HEIGHT,
-        ),
+    return vec(
+      clamp(
+        ((event.clientX - bounds.left) / bounds.width) * CANVAS_WIDTH,
+        0,
+        CANVAS_WIDTH,
+      ),
+      clamp(
+        ((event.clientY - bounds.top) / bounds.height) * CANVAS_HEIGHT,
+        0,
+        CANVAS_HEIGHT,
       ),
     );
-    setStats(sceneStats(runtime));
+  };
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLCanvasElement>): void => {
+    const coords = getPondCoords(event);
+    pointerStateRef.current = {
+      isDown: true,
+      startX: coords.x,
+      startY: coords.y,
+      lastX: coords.x,
+      lastY: coords.y,
+      lastTime: performance.now(),
+      totalDistance: 0,
+    };
+  };
+
+  const handlePointerMove = (event: ReactPointerEvent<HTMLCanvasElement>): void => {
+    const state = pointerStateRef.current;
+    if (!state.isDown) return;
+
+    const coords = getPondCoords(event);
+    const now = performance.now();
+    const dt = Math.max(0.001, (now - state.lastTime) * 0.001);
+    const dx = coords.x - state.lastX;
+    const dy = coords.y - state.lastY;
+    const moveDist = Math.hypot(dx, dy);
+
+    state.totalDistance += moveDist;
+    const vx = dx / dt;
+    const vy = dy / dt;
+    const speed = Math.hypot(vx, vy);
+
+    state.lastX = coords.x;
+    state.lastY = coords.y;
+    state.lastTime = now;
+
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+
+    if (moveDist > 1.8) {
+      // 3. Tactile Fluid Drag & Continuous Bow Wave
+      runtime.renderer.floatingPetals.applyImpulse(coords.x, coords.y, vx * 0.04, vy * 0.04, 38);
+      runtime.school.foodPellets.applyImpulse(coords.x, coords.y, vx * 0.04, vy * 0.04, 32);
+
+      // Trailing bow wave ripple
+      if (speed > 40) {
+        runtime.school.ripples.trigger("touch", coords);
+      }
+
+      // If dragging swiftly, nearby fish react to fluid displacement
+      if (speed > 150) {
+        runtime.school.scareNear(coords.x, coords.y, 46);
+      }
+    }
+  };
+
+  const handlePointerUp = (event: ReactPointerEvent<HTMLCanvasElement>): void => {
+    const state = pointerStateRef.current;
+    if (!state.isDown) return;
+    state.isDown = false;
+
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+
+    const coords = getPondCoords(event);
+    // If it was a tap (< 6px movement), drop floating food pellets and call koi!
+    if (state.totalDistance < 6) {
+      runtime.school.callTo(coords);
+      setStats(sceneStats(runtime));
+    }
+  };
+
+  const handlePointerCancel = (): void => {
+    pointerStateRef.current.isDown = false;
   };
 
   const revealHiddenInterfaceOnMobile = (
@@ -645,7 +816,10 @@ export function App() {
             ref={canvasRef}
             id="pond"
             aria-label="Animated procedural koi"
-            onPointerDown={callFish}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerCancel}
           />
           {previewFamily !== null && settingsOpen && (
             <div className="pond-preview-label" aria-live="polite">
@@ -712,9 +886,21 @@ export function App() {
                     weather={weatherPreset}
                     rainEnabled={rainEnabled}
                     soundEnabled={soundEnabled}
+                    dayNightCycleEnabled={dayNightCycle}
+                    dayNightPhase={dayNightPhase}
+                    dayNightLabel={dayNightInfo.label}
+                    dayNightIcon={dayNightInfo.icon}
+                    volumetricRaysEnabled={volumetricRays}
+                    canopyShadowEnabled={canopyShadow}
+                    volumetricMistEnabled={volumetricMist}
                     onWeatherChange={changeWeather}
                     onRainChange={handleRainChange}
                     onSoundChange={handleSoundChange}
+                    onDayNightCycleChange={handleDayNightCycleChange}
+                    onDayNightPhaseChange={handleDayNightPhaseChange}
+                    onVolumetricRaysChange={handleVolumetricRaysChange}
+                    onCanopyShadowChange={handleCanopyShadowChange}
+                    onVolumetricMistChange={handleVolumetricMistChange}
                     onResetSection={resetSection}
                     onResetAtmosphere={resetAtmosphere}
                     selectedFamily={selectedFamily}
@@ -809,6 +995,17 @@ export function App() {
                 <span className="control-label">Dragonfly</span>
                 <Kbd className="control-shortcut">T</Kbd>
               </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={dropFallingPetal}
+                aria-label="Drift Petal"
+                aria-keyshortcuts="P"
+              >
+                <Leaf aria-hidden="true" />
+                <span className="control-label">Petal</span>
+                <Kbd className="control-shortcut">P</Kbd>
+              </Button>
               <Separator orientation="vertical" />
               <Button
                 variant="ghost"
@@ -877,6 +1074,22 @@ export function App() {
                   </DropdownMenuRadioGroup>
                 </DropdownMenuContent>
               </DropdownMenu>
+              <div className="rain-control" title="10-minute slow day/night lighting cycle">
+                <span aria-hidden="true" style={{ fontSize: "14px", lineHeight: "1" }}>
+                  {dayNightCycle ? dayNightInfo.icon : "⏳"}
+                </span>
+                <span className="rain-control__label">
+                  {dayNightCycle
+                    ? `${dayNightInfo.label} (${Math.floor((dayNightPhase * 600) / 60)}:${String(Math.floor((dayNightPhase * 600) % 60)).padStart(2, "0")})`
+                    : "Day/Night"}
+                </span>
+                <Switch
+                  size="sm"
+                  checked={dayNightCycle}
+                  onCheckedChange={handleDayNightCycleChange}
+                  aria-label="Toggle 10-minute day/night cycle"
+                />
+              </div>
               <div className="rain-control">
                 <CloudRain aria-hidden="true" />
                 <span className="rain-control__label">Rain</span>

@@ -12,9 +12,21 @@ interface QuickSettingsProps {
   weather: WeatherPresetId;
   rainEnabled: boolean;
   soundEnabled: boolean;
+  dayNightCycleEnabled: boolean;
+  dayNightPhase: number;
+  dayNightLabel: string;
+  dayNightIcon: string;
+  volumetricRaysEnabled: boolean;
+  canopyShadowEnabled: boolean;
+  volumetricMistEnabled: boolean;
   onWeatherChange: (id: WeatherPresetId) => void;
   onRainChange: (enabled: boolean) => void;
   onSoundChange: (enabled: boolean) => void;
+  onDayNightCycleChange: (enabled: boolean) => void;
+  onDayNightPhaseChange: (phase: number) => void;
+  onVolumetricRaysChange: (enabled: boolean) => void;
+  onCanopyShadowChange: (enabled: boolean) => void;
+  onVolumetricMistChange: (enabled: boolean) => void;
   onResetSection: (sectionIds: readonly SectionId[]) => void;
   onResetAtmosphere: () => void;
   selectedFamily: number;
@@ -92,9 +104,21 @@ export function QuickSettings({
   weather,
   rainEnabled,
   soundEnabled,
+  dayNightCycleEnabled,
+  dayNightPhase,
+  dayNightLabel,
+  dayNightIcon,
+  volumetricRaysEnabled,
+  canopyShadowEnabled,
+  volumetricMistEnabled,
   onWeatherChange,
   onRainChange,
   onSoundChange,
+  onDayNightCycleChange,
+  onDayNightPhaseChange,
+  onVolumetricRaysChange,
+  onCanopyShadowChange,
+  onVolumetricMistChange,
   onResetSection,
   onResetAtmosphere,
   selectedFamily,
@@ -302,6 +326,67 @@ export function QuickSettings({
           <div className="settings-quick__heading-row"><h3 id="quick-atmosphere-heading">Atmosphere</h3><button type="button" className="settings-section-reset" onClick={onResetAtmosphere}><RotateCcw aria-hidden="true" /> Reset</button></div>
           <p>Choose the light, ripples, and background river sound.</p>
         </div>
+        <div className="quick-setting quick-setting--switch" data-base-ui-swipe-ignore>
+          <div className="quick-setting__copy">
+            <Label htmlFor="quick-daynight">Day/night cycle (10 min)</Label>
+            <small>
+              {dayNightCycleEnabled
+                ? `${dayNightIcon} ${dayNightLabel} (${Math.floor((dayNightPhase * 600) / 60)}m ${String(Math.floor((dayNightPhase * 600) % 60)).padStart(2, "0")}s) — continuous 10-minute daylight & moonlight flow.`
+                : "Smoothly transition ambient lighting, pond hues, and cloud shadows over 10 minutes."}
+            </small>
+          </div>
+          <Switch id="quick-daynight" checked={dayNightCycleEnabled} onCheckedChange={onDayNightCycleChange} />
+        </div>
+        {dayNightCycleEnabled && (
+          <div className="quick-setting" data-base-ui-swipe-ignore>
+            <div className="quick-setting__copy">
+              <Label htmlFor="quick-time-scrub">Time of day ({Math.floor((dayNightPhase * 600) / 60)}:{String(Math.floor((dayNightPhase * 600) % 60)).padStart(2, "0")})</Label>
+              <small>Drag to jump to any point in the 10-minute cycle.</small>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", width: "100%" }}>
+              <input
+                id="quick-time-scrub"
+                type="range"
+                min="0"
+                max="1"
+                step="0.005"
+                value={dayNightPhase}
+                onChange={(e) => onDayNightPhaseChange(parseFloat(e.target.value))}
+                style={{ width: "100%", accentColor: "#e6a817" }}
+              />
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="settings-section-reset"
+                  onClick={() => onDayNightPhaseChange(0.0)}
+                >
+                  🌅 Dawn
+                </button>
+                <button
+                  type="button"
+                  className="settings-section-reset"
+                  onClick={() => onDayNightPhaseChange(0.33)}
+                >
+                  ☀️ Midday
+                </button>
+                <button
+                  type="button"
+                  className="settings-section-reset"
+                  onClick={() => onDayNightPhaseChange(0.63)}
+                >
+                  🌇 Sunset
+                </button>
+                <button
+                  type="button"
+                  className="settings-section-reset"
+                  onClick={() => onDayNightPhaseChange(0.90)}
+                >
+                  🌙 Moonlight
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="quick-setting" data-base-ui-swipe-ignore>
           <div className="quick-setting__copy">
             <Label htmlFor="quick-weather">Weather</Label>
@@ -317,6 +402,27 @@ export function QuickSettings({
               <option key={preset.id} value={preset.id}>{preset.label}</option>
             ))}
           </select>
+        </div>
+        <div className="quick-setting quick-setting--switch" data-base-ui-swipe-ignore>
+          <div className="quick-setting__copy">
+            <Label htmlFor="quick-volumetric-rays">Volumetric God rays</Label>
+            <small>Luminous shafts of sunlight & moonlight slicing through the water column.</small>
+          </div>
+          <Switch id="quick-volumetric-rays" checked={volumetricRaysEnabled} onCheckedChange={onVolumetricRaysChange} />
+        </div>
+        <div className="quick-setting quick-setting--switch" data-base-ui-swipe-ignore>
+          <div className="quick-setting__copy">
+            <Label htmlFor="quick-canopy-komorebi">Canopy Komorebi</Label>
+            <small>Overhanging tree branches swaying in the breeze casting dappled leaf shadows.</small>
+          </div>
+          <Switch id="quick-canopy-komorebi" checked={canopyShadowEnabled} onCheckedChange={onCanopyShadowChange} />
+        </div>
+        <div className="quick-setting quick-setting--switch" data-base-ui-swipe-ignore>
+          <div className="quick-setting__copy">
+            <Label htmlFor="quick-volumetric-mist">Morning Mist (Asagiri)</Label>
+            <small>Gentle drifting surface fog with low-angle grazing crepuscular light.</small>
+          </div>
+          <Switch id="quick-volumetric-mist" checked={volumetricMistEnabled} onCheckedChange={onVolumetricMistChange} />
         </div>
         <div className="quick-setting quick-setting--switch" data-base-ui-swipe-ignore>
           <div className="quick-setting__copy">

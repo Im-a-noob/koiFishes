@@ -41,8 +41,13 @@ export class Koi {
   public inDeepPeriod = false;
   public gulpCountdown = 8;
   public gulpAnimation = 0;
+  public previousTailSign = 0;
+  public foodSeeking = false;
   public behaviorRng = 1;
   public state = SwimState.Glide;
+  public draftingFactor = 0;
+  public collisionRepulsion = vec();
+  public siltCooldown = 0;
 
   public reset(index: number, random: XorShift32): void {
     this.position = vec(
@@ -100,6 +105,9 @@ export class Koi {
     this.tailEffort = 0.6;
     this.angularVelocity = 0;
     this.velocity = mul(fromAngle(this.heading), this.speed);
+    this.draftingFactor = 0;
+    this.collisionRepulsion = vec();
+    this.siltCooldown = random.range(0.2, 1.2);
 
     const backward = mul(fromAngle(this.heading), -this.bodyLength / (SPINE_NODES - 1));
     for (let node = 0; node < SPINE_NODES; node += 1) {

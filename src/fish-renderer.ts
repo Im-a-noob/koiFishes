@@ -28,6 +28,7 @@ import {
   sub,
   type Vec2,
 } from "./math";
+import { FloatingPetalsPass, type PetalType } from "./floating-petals";
 import { PondBedPass } from "./pond-bed";
 import { School } from "./school";
 import { SurfaceDisturbancePass } from "./surface-disturbance";
@@ -257,6 +258,7 @@ class GeometryBatch {
     color: THREE.Color = DEFAULT_COLOR,
     alpha = 1,
   ): void {
+    if (this.cursor + 9 > this.values.length) return;
     this.point(a, color, alpha);
     this.point(b, color, alpha);
     this.point(c, color, alpha);
@@ -268,6 +270,7 @@ class GeometryBatch {
     color: THREE.Color = DEFAULT_COLOR,
     alpha = 1,
   ): void {
+    if (this.cursor + 6 > this.values.length) return;
     this.point(a, color, alpha);
     this.point(b, color, alpha);
   }
@@ -380,6 +383,9 @@ export class FishRenderer {
   private readonly tinyFishRenderer = new TinyFishRenderer();
   private readonly duckweed = new DuckweedPass();
   private readonly lotusLeaves = new LotusLeavesPass();
+  public readonly floatingPetals = new FloatingPetalsPass();
+  private foodPelletsSceneAdded = false;
+  private siltParticlesSceneAdded = false;
   private readonly butterflies = new ButterflyPass();
   private readonly dragonfly = new DragonflyPass();
   private readonly fishShadowMaterial = shadowMaterial(1);
@@ -405,6 +411,8 @@ export class FishRenderer {
   );
   private readonly shadowStrengthColor = new THREE.Color();
   private readonly targetFishShadowColor = new THREE.Color(FISH.shadow.color);
+  private readonly currentLightDirection = new THREE.Vector2(-0.58, 0.82);
+  private currentSunAltitude = 0.85;
   private previousAppearanceTime = -1;
   private currentVisualDepth = 0;
   private previewFamilyIndex: number | null = null;
@@ -547,11 +555,13 @@ export class FishRenderer {
     this.surfaceScene.add(this.waterSurface.mesh);
     this.surfaceShadowScene.add(
       this.duckweed.shadowGroup,
+      this.floatingPetals.shadowGroup,
       this.butterflies.shadowGroup,
       this.dragonfly.shadowGroup,
     );
     this.surfaceObjectScene.add(
       this.duckweed.group,
+      this.floatingPetals.group,
       this.lotusLeaves.group,
       this.butterflies.group,
       this.dragonfly.group,
@@ -750,6 +760,22 @@ export class FishRenderer {
     this.dragonfly.triggerExcursion();
   }
 
+  public spawnFallingPetal(type?: PetalType): void {
+    this.floatingPetals.spawnFallingPetal(undefined, undefined, type);
+  }
+
+  public setVolumetricRaysEnabled(enabled: boolean): void {
+    this.weather.setVolumetricRaysEnabled(enabled);
+  }
+
+  public setCanopyShadowEnabled(enabled: boolean): void {
+    this.weather.setCanopyShadowEnabled(enabled);
+  }
+
+  public setVolumetricMistEnabled(enabled: boolean): void {
+    this.weather.setVolumetricMistEnabled(enabled);
+  }
+
   public draw(school: School, time: number, showDebug: boolean): void {
     this.currentTime = time;
 
@@ -768,6 +794,11 @@ export class FishRenderer {
         dn.waterCurrentCore,
       );
       this.targetFishShadowColor.copy(dn.shadowColor);
+      this.currentLightDirection.copy(dn.lightDirection);
+      this.currentSunAltitude = dn.sunAltitude;
+    } else {
+      this.currentLightDirection.copy(this.weather.lightDirection);
+      this.currentSunAltitude = this.weather.sunAltitude;
     }
 
     this.weather.update(time);
@@ -863,9 +894,39 @@ export class FishRenderer {
     );
     this.waterSurface.update(school, time);
     this.duckweed.update(time, school.ripples);
-    this.lotusLeaves.update(time, school.ripples);
+    this.lotusLeaves.update(
+      time,
+      school.ripples,
+      this.currentLightDirection,
+      this.currentSunAltitude,
+    );
+    this.weather.setLotusOccluders(
+      this.lotusLeaves.leafOccluders,
+      CANVAS_WIDTH,
+      CANVAS_HEIGHT,
+    );
     this.butterflies.update(time);
     this.dragonfly.update(time, school);
+
+    if (!this.foodPelletsSceneAdded) {
+      this.surfaceShadowScene.add(school.foodPellets.shadowGroup);
+      this.surfaceObjectScene.add(school.foodPellets.group);
+      this.foodPelletsSceneAdded = true;
+    }
+
+    if (!this.siltParticlesSceneAdded) {
+      this.bedScene.add(school.siltParticles.group);
+      this.siltParticlesSceneAdded = true;
+    }
+
+    this.floatingPetals.update(
+      time,
+      school.vortices,
+      school.ripples,
+      this.lotusLeaves.leafOccluders,
+      this.currentLightDirection,
+      this.currentSunAltitude,
+    );
 
     // 1. Render all underwater shadows and apply soft Gaussian blur if enabled
     const shadowBlurRadius = WATER.shadowBlur ?? 1.0;
@@ -1012,20 +1073,36 @@ export class FishRenderer {
     target: FishAppearance,
   ): void {
     const visualDepth = this.visualDepth(fish.depth);
-    this.applyDepthColor(source.base, target.base, visualDepth);
-    this.applyDepthColor(source.accent, target.accent, visualDepth);
-    this.applyDepthColor(source.marking, target.marking, visualDepth);
-    this.applyDepthColor(source.fin, target.fin, visualDepth);
-    this.applyDepthColor(source.eye, target.eye, visualDepth);
+
+    // Volumetric shadow occlusion when fish swims beneath a lotus leaf
+    const headPos = fish.renderSpine[0];
+    let underLeafShade = 0;
+    for (const occluder of this.lotusLeaves.leafOccluders) {
+      const dx = headPos.x - occluder.x;
+      const dy = headPos.y - occluder.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < occluder.radius * 1.15) {
+        const factor = 1.0 - Math.min(1.0, dist / (occluder.radius * 1.15));
+        underLeafShade = Math.max(underLeafShade, factor);
+      }
+    }
+    const leafShadeFactor = 1.0 - underLeafShade * 0.35;
+
+    this.applyDepthColor(source.base, target.base, visualDepth, leafShadeFactor);
+    this.applyDepthColor(source.accent, target.accent, visualDepth, leafShadeFactor);
+    this.applyDepthColor(source.marking, target.marking, visualDepth, leafShadeFactor);
+    this.applyDepthColor(source.fin, target.fin, visualDepth, leafShadeFactor);
+    this.applyDepthColor(source.eye, target.eye, visualDepth, leafShadeFactor);
   }
 
   private applyDepthColor(
     source: THREE.Color,
     target: THREE.Color,
     visualDepth: number,
+    leafShade = 1.0,
   ): void {
     // Preserve crystal clarity and luminosity underwater ("độ trong của nước")
-    const depthDim = 1.0 - visualDepth * 0.06; // Very subtle dimming to preserve pristine transparency
+    const depthDim = (1.0 - visualDepth * 0.06) * leafShade; // Very subtle dimming to preserve pristine transparency
     const saturation = 1.0 - visualDepth * 0.12; // Natural slight desaturation
     const luminance = source.r * 0.2126 + source.g * 0.7152 + source.b * 0.0722;
 
@@ -1047,13 +1124,12 @@ export class FishRenderer {
   }
 
   private addShadowTriangle(a: Vec2, b: Vec2, c: Vec2): void {
+    const fishShadowDist =
+      (1.0 - Math.min(1.0, Math.max(0.1, this.currentSunAltitude)) * 0.6) * 11.0;
+    const depthFactor = 0.65 + 0.35 * this.currentVisualDepth;
     const shadowOffset = {
-      x:
-        FISH.shadow.offset.x +
-        FISH.shadow.depthOffset.x * this.currentVisualDepth,
-      y:
-        FISH.shadow.offset.y +
-        FISH.shadow.depthOffset.y * this.currentVisualDepth,
+      x: -this.currentLightDirection.x * fishShadowDist * depthFactor,
+      y: -this.currentLightDirection.y * fishShadowDist * depthFactor,
     };
     // Deep fish cast softer diffuse shadows because water scatters sunlight
     const opacity =
@@ -1075,13 +1151,12 @@ export class FishRenderer {
   }
 
   private addShadowCircle(center: Vec2, radius: number): void {
+    const fishShadowDist =
+      (1.0 - Math.min(1.0, Math.max(0.1, this.currentSunAltitude)) * 0.6) * 11.0;
+    const depthFactor = 0.65 + 0.35 * this.currentVisualDepth;
     const shadowOffset = {
-      x:
-        FISH.shadow.offset.x +
-        FISH.shadow.depthOffset.x * this.currentVisualDepth,
-      y:
-        FISH.shadow.offset.y +
-        FISH.shadow.depthOffset.y * this.currentVisualDepth,
+      x: -this.currentLightDirection.x * fishShadowDist * depthFactor,
+      y: -this.currentLightDirection.y * fishShadowDist * depthFactor,
     };
     const opacity =
       (FISH.shadow.surfaceOpacity +

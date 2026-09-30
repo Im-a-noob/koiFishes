@@ -18,9 +18,21 @@ interface ConfigEditorProps {
   weather: WeatherPresetId;
   rainEnabled: boolean;
   soundEnabled: boolean;
+  dayNightCycleEnabled: boolean;
+  dayNightPhase: number;
+  dayNightLabel: string;
+  dayNightIcon: string;
+  volumetricRaysEnabled: boolean;
+  canopyShadowEnabled: boolean;
+  volumetricMistEnabled: boolean;
   onWeatherChange: (id: WeatherPresetId) => void;
   onRainChange: (enabled: boolean) => void;
   onSoundChange: (enabled: boolean) => void;
+  onDayNightCycleChange: (enabled: boolean) => void;
+  onDayNightPhaseChange: (phase: number) => void;
+  onVolumetricRaysChange: (enabled: boolean) => void;
+  onCanopyShadowChange: (enabled: boolean) => void;
+  onVolumetricMistChange: (enabled: boolean) => void;
   onResetSection: (sectionIds: readonly SectionId[]) => void;
   onResetAtmosphere: () => void;
   selectedFamily: number;
@@ -387,9 +399,21 @@ export const ConfigEditor = memo(function ConfigEditor({
   weather,
   rainEnabled,
   soundEnabled,
+  dayNightCycleEnabled,
+  dayNightPhase,
+  dayNightLabel,
+  dayNightIcon,
+  volumetricRaysEnabled,
+  canopyShadowEnabled,
+  volumetricMistEnabled,
   onWeatherChange,
   onRainChange,
   onSoundChange,
+  onDayNightCycleChange,
+  onDayNightPhaseChange,
+  onVolumetricRaysChange,
+  onCanopyShadowChange,
+  onVolumetricMistChange,
   onResetSection,
   onResetAtmosphere,
   selectedFamily,
@@ -416,9 +440,21 @@ export const ConfigEditor = memo(function ConfigEditor({
           weather={weather}
           rainEnabled={rainEnabled}
           soundEnabled={soundEnabled}
+          dayNightCycleEnabled={dayNightCycleEnabled}
+          dayNightPhase={dayNightPhase}
+          dayNightLabel={dayNightLabel}
+          dayNightIcon={dayNightIcon}
+          volumetricRaysEnabled={volumetricRaysEnabled}
+          canopyShadowEnabled={canopyShadowEnabled}
+          volumetricMistEnabled={volumetricMistEnabled}
           onWeatherChange={onWeatherChange}
           onRainChange={onRainChange}
           onSoundChange={onSoundChange}
+          onDayNightCycleChange={onDayNightCycleChange}
+          onDayNightPhaseChange={onDayNightPhaseChange}
+          onVolumetricRaysChange={onVolumetricRaysChange}
+          onCanopyShadowChange={onCanopyShadowChange}
+          onVolumetricMistChange={onVolumetricMistChange}
           onResetSection={onResetSection}
           onResetAtmosphere={onResetAtmosphere}
           selectedFamily={selectedFamily}
