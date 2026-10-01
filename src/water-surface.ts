@@ -252,6 +252,62 @@ const fragmentShader = /* glsl */ `
 
     color *= uColorTint;
 
+    // ---- DYNAMIC PHOTOREALISTIC SUNLIGHT CAUSTICS ----
+    // Multi-octave Voronoi caustic webs with chromatic dispersion
+    vec2 causticWarp = displacement * uResolution * 2.8;
+    vec2 cuv1 = (distortedPixel + causticWarp) * 0.042 + vec2(uTime * 0.024, uTime * 0.015);
+    vec2 cuv2 = (distortedPixel * 1.48 + causticWarp * 1.5) * 0.042 - vec2(uTime * 0.019, -uTime * 0.028);
+
+    // Prismatic RGB sampling offsets for chromatic aberration at caustic edges
+    vec2 dispR = vec2(0.042, -0.025);
+    vec2 dispB = vec2(-0.042, 0.025);
+
+    // Green channel (central focus)
+    float border1_G = cellularBorderDistance(cuv1);
+    float border2_G = cellularBorderDistance(cuv2 + vec2(3.7, 8.1));
+    float c1_G = pow(clamp(1.0 - border1_G * 2.2, 0.0, 1.0), 3.0);
+    float c2_G = pow(clamp(1.0 - border2_G * 2.2, 0.0, 1.0), 3.0);
+    float caustics_G = c1_G + c2_G * 0.85 + c1_G * c2_G * 3.8;
+
+    // Red channel (dispersed)
+    float border1_R = cellularBorderDistance(cuv1 + dispR);
+    float border2_R = cellularBorderDistance(cuv2 + dispR + vec2(3.7, 8.1));
+    float c1_R = pow(clamp(1.0 - border1_R * 2.2, 0.0, 1.0), 3.0);
+    float c2_R = pow(clamp(1.0 - border2_R * 2.2, 0.0, 1.0), 3.0);
+    float caustics_R = c1_R + c2_R * 0.85 + c1_R * c2_R * 3.8;
+
+    // Blue channel (dispersed)
+    float border1_B = cellularBorderDistance(cuv1 + dispB);
+    float border2_B = cellularBorderDistance(cuv2 + dispB + vec2(3.7, 8.1));
+    float c1_B = pow(clamp(1.0 - border1_B * 2.2, 0.0, 1.0), 3.0);
+    float c2_B = pow(clamp(1.0 - border2_B * 2.2, 0.0, 1.0), 3.0);
+    float caustics_B = c1_B + c2_B * 0.85 + c1_B * c2_B * 3.8;
+
+    // Combine prismatic chromatic caustics with warm golden sunlight tint
+    vec3 chromaticCaustics = vec3(
+      caustics_R * 1.22,
+      caustics_G * 1.12,
+      caustics_B * 0.94
+    );
+
+    // Wave swell intensity breathing
+    float swell = sin(distortedPixel.x * 0.015 + distortedPixel.y * 0.012 + uTime * 0.9) * 0.18 + 0.82;
+    chromaticCaustics *= swell;
+
+    // Add sunlight caustics across the underwater bed & fish
+    color += chromaticCaustics * 0.44;
+
+    // ---- WATER SURFACE RIPPLE SPECULAR GLINTS ----
+    // Sun reflecting off capillary wave slopes and ripple fronts
+    float rippleSlope = length(displacement * uResolution);
+    float sunGlint = pow(clamp(rippleSlope * 3.8, 0.0, 1.0), 3.2) * 0.38;
+    color += vec3(sunGlint * 0.96, sunGlint * 0.98, sunGlint * 1.05);
+
+    // Subtle sky reflection sheen at glancing angles
+    float fresnel = pow(clamp(rippleSlope * 1.8 + 0.05, 0.0, 1.0), 3.0);
+    vec3 skySheen = vec3(0.55, 0.76, 0.90);
+    color = mix(color, color + skySheen * 0.25, fresnel);
+
     if (uShowCurrentEffect > 0.5) {
       vec2 largeWavePixel = directionalWavePixel(
         distortedPixel,

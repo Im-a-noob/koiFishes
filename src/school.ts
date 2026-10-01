@@ -159,8 +159,15 @@ export class School {
       const dist = Math.hypot(dx, dy);
       if (dist < radius && dist > 0.01) {
         fish.heading = Math.atan2(dy, dx);
-        fish.speed = fish.maximumSpeed * 1.08;
+        fish.speed = fish.maximumSpeed * 1.15;
         this.enterState(fish, SwimState.Burst);
+        // Startle Dive: koi immediately dives into the deep water column to seek shelter
+        fish.targetDepth = 0.85;
+        fish.depthTransitionRate = 5.2;
+        fish.inDeepPeriod = true;
+        fish.depthStateAge = 0;
+        fish.depthStateDuration = 5.5;
+        this.siltParticles.spawnSiltPuff(fish.position.x, fish.position.y, fish.heading, fish.speed, 1, 2);
       }
     }
   }
@@ -212,7 +219,10 @@ export class School {
   private updateDepth(fish: Koi, dt: number): void {
     fish.depthStateAge += dt;
     const risingForCall = this.targetActive && fish.respondedToCall;
-    if (!risingForCall && fish.depthStateAge >= fish.depthStateDuration) {
+    if (risingForCall) {
+      fish.targetDepth = 0.06;
+      fish.depthTransitionRate = 4.2;
+    } else if (fish.depthStateAge >= fish.depthStateDuration) {
       fish.depthStateAge = 0;
       if (this.behaviorUnit(fish) < FISH.depth.changeProbability) {
         fish.inDeepPeriod = !fish.inDeepPeriod;

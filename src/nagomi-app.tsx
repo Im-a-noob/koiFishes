@@ -1,4 +1,5 @@
 import {
+  Box,
   Cloud,
   CloudFog,
   CloudRain,
@@ -193,6 +194,14 @@ export function App() {
   const [volumetricRays, setVolumetricRays] = useState(true);
   const [canopyShadow, setCanopyShadow] = useState(true);
   const [volumetricMist, setVolumetricMist] = useState(true);
+  const [is3DView, setIs3DView] = useState(false);
+
+  const toggle3DView = useCallback(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    const nextState = runtime.renderer.toggle3DView();
+    setIs3DView(nextState);
+  }, []);
 
   // Track the Day/Night progress in real time for UI readouts
   useEffect(() => {
@@ -658,6 +667,10 @@ export function App() {
           event.preventDefault();
           runtime.renderer.spawnFallingPetal();
           break;
+        case "KeyV":
+          event.preventDefault();
+          toggle3DView();
+          break;
         default:
           return;
       }
@@ -676,7 +689,7 @@ export function App() {
       renderer.dispose();
       runtimeRef.current = null;
     };
-  }, [changeKoiCount, toggleAmbientMode]);
+  }, [changeKoiCount, toggleAmbientMode, toggle3DView]);
 
   const pointerStateRef = useRef<{
     isDown: boolean;
@@ -944,6 +957,18 @@ export function App() {
             aria-label="Simulation controls"
           >
             <div className="control-group control-group--view">
+              <Button
+                variant={is3DView ? "secondary" : "ghost"}
+                size="sm"
+                onClick={toggle3DView}
+                aria-label={is3DView ? "Switch to Zen top-down view" : "Switch to 3D perspective angle"}
+                aria-keyshortcuts="V"
+                aria-pressed={is3DView}
+              >
+                <Box aria-hidden="true" />
+                <span className="control-label">{is3DView ? "3D Angle" : "Zen View"}</span>
+                <Kbd className="control-shortcut">V</Kbd>
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"
